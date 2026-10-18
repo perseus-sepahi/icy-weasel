@@ -81,11 +81,12 @@ The app sandbox entitlements are network client (browsing), downloads folder (sa
 
 ## Screenshots
 
-Mac: 2880×1800 (or 2560×1600, 1440×900, 1280×800), 1 to 10 images. Generated into
-`distribution/screenshots/` by `scripts/make-screenshots.sh` from window captures.
-Suggested set:
+Mac: 2880×1800. Uploaded for 1.0 (in `distribution/screenshots/`):
 1. New Tab page with blocked count and protections
-2. A news site with the shield panel open
-3. Tab groups in the tab strip
-4. Page assistant answering a question about the page
-5. Settings: search engines and JavaScript engine
+2. Protection settings
+3. Filter lists
+4. Search engine and local AI settings
+
+Compose new ones with `swift scripts/compose-screenshot.swift <capture.png> <out.png> "caption"`.
+Web pages only render while the browser window is on a visible desktop, so capture
+page screenshots (shield panel, tab groups) from a regular desktop, not a full-screen Space.
