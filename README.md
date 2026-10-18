@@ -169,6 +169,15 @@ injection in the page and checks the model still answers from the facts).
 Bonsai-style end-to-end test runs against `scripts/fake-ai-server.py`, because the app
 sandbox can't host a server itself.
 
+### Passwords
+Sign-ins are offered for saving after a real submit (`Resources/JS/password-manager.js`,
+isolated world; synthetic events from the page are ignored) and stored as internet
+passwords in the login keychain (`Sources/Passwords`). They fill only when the user
+clicks the key in the address bar, only into the frame that showed the form, and only
+for the exact HTTPS host they were saved for. Showing or copying one in Settings asks
+for the Mac's password or Touch ID. Private windows never save. Google and Safari
+exports (CSV) can be imported; Google's own sync is only available inside Chrome.
+
 ### Pop-ups
 WebKit refuses `window.open` without a user gesture; Icy Weasel also blocks the
 pop-under pattern — script-opened, cross-site windows fired from any click. Real
@@ -276,7 +285,7 @@ is WebKit's per-request rule matching, paid on every resource a page loads.
   extensions cannot be installed. macOS 15.4+ does ship a `WKWebExtension` API that can
   load Safari-style WebExtensions (the same manifest format most Chrome extensions use);
   wiring that in is the realistic route to extension support and is not done yet.
-- Not yet included: password manager/autofill, sync, reader mode, picture-in-picture
+- Not yet included: syncing passwords and bookmarks between devices, reader mode, picture-in-picture
   button, drag-to-reorder tabs, proxy/Tor routing.
   Included: tabs with hibernation, **tab groups** (named, coloured, collapsible; right-click
   a tab, or ⌥⌘G), session restore, reopen closed tab (⇧⌘T), history (⌘Y) and bookmarks

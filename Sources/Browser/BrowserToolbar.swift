@@ -60,6 +60,10 @@ struct BrowserToolbar: View {
                 .onKeyPress(.escape) { model.cancelOmniboxEdit(); return .handled }
                 .onChange(of: model.omniboxText) { _, _ in model.suggestionIndex = nil }
 
+            if let tab, !tab.availableLogins.isEmpty, !omniboxFocused {
+                PasswordFillButton(tab: tab)
+            }
+
             if let url = tab?.url, !omniboxFocused, !model.isPrivateWindow {
                 Button { model.toggleBookmark() } label: {
                     Image(systemName: model.library.isBookmarked(url) ? "star.fill" : "star")

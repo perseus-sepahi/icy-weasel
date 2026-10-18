@@ -64,11 +64,17 @@ struct AssistantPanel: View {
                     ForEach(assistant.cloudChoices) { choice in item(choice, assistant) }
                 }
             }
+            if !assistant.stoppedApps.isEmpty || !assistant.stoppedLaunchers.isEmpty {
+                Section("Not running") {
+                    ForEach(assistant.stoppedApps, id: \.self) { app in Button("Start \(app.name)") { assistant.start(app) } }
+                    ForEach(assistant.stoppedLaunchers) { launcher in Button("Start \(launcher.name)") { assistant.start(launcher) } }
+                }
+            }
             Divider()
             Button("Look for Models Again") { Task { await assistant.refreshModels() } }
             SettingsLink { Text("AI Settings…") }
         } label: {
-            Text(assistant.selected.map { $0.model } ?? (assistant.status == .checking ? "Looking…" : "No model"))
+            Text(assistant.selected.map { $0.displayName } ?? (assistant.status == .checking ? "Looking…" : "No model"))
                 .font(.system(size: 11)).lineLimit(1).truncationMode(.middle)
         }
         .menuStyle(.borderlessButton).frame(maxWidth: 120)
@@ -80,16 +86,16 @@ struct AssistantPanel: View {
             assistant.select(choice)
         } label: {
             if choice.id == assistant.selected?.id {
-                Label("\(choice.model)  (\(choice.source.name))", systemImage: "checkmark")
+                Label("\(choice.displayName)  (\(choice.source.name))", systemImage: "checkmark")
             } else {
-                Text("\(choice.model)  (\(choice.source.name))")
+                Text("\(choice.displayName)  (\(choice.source.name))")
             }
         }
     }
 
     /// Always visible while a cloud model is selected: the page leaves the Mac.
     private func cloudBanner(_ choice: AIModelChoice) -> some View {
-        Label("Sends the page to \(choice.source.baseURL.host ?? choice.source.name)", systemImage: "icloud.and.arrow.up")
+        Label("Sends the page to \(choice.source.destinationHost)", systemImage: "icloud.and.arrow.up")
             .font(.system(size: 11)).foregroundStyle(Theme.warning)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 12).padding(.bottom, 6)
@@ -126,6 +132,9 @@ struct AssistantPanel: View {
                 .multilineTextAlignment(.center).textSelection(.enabled)
             ForEach(assistant.stoppedApps, id: \.self) { app in
                 Button("Start \(app.name)") { assistant.start(app) }.controlSize(.regular)
+            }
+            ForEach(assistant.stoppedLaunchers) { launcher in
+                Button("Start \(launcher.name)") { assistant.start(launcher) }.controlSize(.regular)
             }
             HStack {
                 Button("Check Again") { Task { await assistant.refreshModels() } }

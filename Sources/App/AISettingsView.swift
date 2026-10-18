@@ -1,4 +1,6 @@
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 
 /// Settings > AI: what's running on this Mac, extra local servers, and cloud
 /// providers with the user's own API key.
@@ -39,7 +41,7 @@ struct AISettingsView: View {
                 ForEach(Dictionary(grouping: detected, by: \.source.name).sorted { $0.key < $1.key }, id: \.key) { name, models in
                     VStack(alignment: .leading, spacing: 2) {
                         Text(name).font(.system(size: 13, weight: .medium))
-                        Text(models.map(\.model).joined(separator: ", ")).font(.system(size: 11)).foregroundStyle(.secondary)
+                        Text(models.map(\.displayName).joined(separator: ", ")).font(.system(size: 11)).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -60,14 +62,29 @@ struct AISettingsView: View {
                 }
                 .disabled(LocalAIDiscovery.loopbackURL(newLocal) == nil)
             }
-            Button(scanning ? "Looking…" : "Look Again") { Task { await scan() } }.disabled(scanning)
+            ForEach(settings.localAILaunchers) { launcher in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Start \(launcher.name)").font(.system(size: 13, weight: .medium))
+                        Text(launcher.resolvedURL()?.path ?? "Script not found, choose it again")
+                            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
+                    }
+                    Spacer()
+                    Button("Remove") { settings.localAILaunchers.removeAll { $0.id == launcher.id } }
+                }
+            }
+            HStack {
+                Button("Add Start Script…") { chooseLauncher(settings) }
+                Button(scanning ? "Looking…" : "Look Again") { Task { await scan() } }.disabled(scanning)
+            }
         } header: {
             Text("On this Mac")
         } footer: {
             Text("""
-                Detected automatically while running: Ollama, Bonsai (start_llama_server.sh or start_mlx_server.sh), \
-                LM Studio, Jan, GPT4All and other servers with an OpenAI-style API. New models appear by themselves. \
-                Local models keep the page on your Mac.
+                Detected automatically while running: Ollama, Bonsai, LM Studio, Jan, GPT4All and other servers with \
+                an OpenAI-style API. New models appear by themselves. For a model that starts from a script, like \
+                Bonsai (Bonsai-demo/scripts/start_llama_server.sh), add the script once and the assistant offers to \
+                start it. Local models keep the page on your Mac.
                 """)
         }
     }
@@ -136,9 +153,26 @@ struct AISettingsView: View {
 
     // MARK: Actions
 
+    private func chooseLauncher(_ settings: BrowserSettings) {
+        let panel = NSOpenPanel()
+        panel.message = "Choose the script that starts your model server, for example Bonsai-demo/scripts/start_llama_server.sh"
+        panel.prompt = "Add"
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.shellScript, .unixExecutable, .script, .item]
+        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Bonsai-demo/scripts")
+        guard panel.runModal() == .OK, let url = panel.url,
+              let bookmark = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
+        else { return }
+        let defaults = LocalAILauncher.defaults(for: url)
+        settings.localAILaunchers.append(LocalAILauncher(name: defaults.name, bookmark: bookmark, port: defaults.port))
+        Task { await scan() }
+    }
+
     private func scan() async {
         scanning = true
-        detected = await LocalAIDiscovery.discover(customEndpoints: services.settings.customLocalAIEndpoints)
+        detected = await LocalAIDiscovery.discover(customEndpoints: services.settings.customLocalAIEndpoints,
+                                                   launcherPorts: Set(services.settings.localAILaunchers.map(\.port)))
         scanning = false
     }
 

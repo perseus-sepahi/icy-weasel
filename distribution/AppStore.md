@@ -40,9 +40,10 @@ SAFER JAVASCRIPT
 By default Icy Weasel runs pages without the JavaScript JIT compiler, the part of a browser most often used in real attacks. Reading sites feel the same. For a heavy web app you trust, switch that one site to Full speed from the shield.
 
 EVERYTHING ELSE
+• Saves passwords in your Mac's keychain and fills them when you click the key in the address bar; imports passwords exported from other browsers
 • Tab groups, tab sleeping and session restore
 • Private windows that keep nothing
-• A page assistant that runs open-source AI models locally, so pages never leave your Mac
+• A page assistant that finds the open-source AI models running on your Mac, so pages never leave it, with optional cloud models using your own API key
 • Eleven search engines to choose from, or your own
 • Per-site controls for every protection
 • History and bookmarks with suggestions that never leave your Mac
@@ -78,7 +79,9 @@ Icy Weasel is a WebKit browser. No sign-in is needed. To see blocking, open any 
 
 The page assistant (sparkle button) is optional and only works with Ollama installed on the same Mac; without it, the panel explains how to set it up. It connects to localhost only, which is why NSAllowsLocalNetworking is set. NSAllowsArbitraryLoadsInWebContent is set because users can visit any website; the app's own requests use HTTPS.
 
-The app sandbox entitlements are network client (browsing), downloads folder (saving downloads), user-selected files (uploads) and printing.
+Saved passwords are stored only in the user's login keychain and filled only when the user clicks the key in the address bar. Optional cloud AI providers use the user's own API key, and the app asks before the first page is sent to one.
+
+The app sandbox entitlements are network client (browsing), downloads folder (saving downloads), user-selected files (uploads, password import, choosing a local AI start script), security-scoped bookmarks (remembering that script) and printing.
 
 ## Screenshots
 

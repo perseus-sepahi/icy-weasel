@@ -30,6 +30,7 @@ enum ScriptInjector {
     }
 
     static let blockedMessageHandler = "icyWeaselBlocked"
+    static let passwordMessageHandler = "icyWeaselPasswords"
 
     /// Our own scripts run here, not in the page world. A page can enumerate
     /// `window.webkit.messageHandlers`; a handler named after this browser would
@@ -39,7 +40,7 @@ enum ScriptInjector {
     /// Read once; scripts are rebuilt on every cross-site navigation.
     private static let sources: [String: String] = {
         var loaded: [String: String] = [:]
-        for name in ["fingerprint-defense", "block-counter", "youtube-adblock"] {
+        for name in ["fingerprint-defense", "block-counter", "youtube-adblock", "password-manager"] {
             if let url = Bundle.main.url(forResource: name, withExtension: "js"),
                let text = try? String(contentsOf: url, encoding: .utf8) {
                 loaded[name] = text
@@ -73,6 +74,12 @@ enum ScriptInjector {
         guard let body = sources["youtube-adblock"] else { return nil }
         let source = body.replacingOccurrences(of: "__IW_YT_PRUNE__", with: pruneSchedule ? "true" : "false")
         return WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+    }
+
+    /// Isolated world, every frame (sign-in forms often live in iframes).
+    static func passwordManager() -> WKUserScript? {
+        guard let body = sources["password-manager"] else { return nil }
+        return WKUserScript(source: body, injectionTime: .atDocumentEnd, forMainFrameOnly: false, in: isolatedWorld)
     }
 
     static func blockCounter() -> WKUserScript? {

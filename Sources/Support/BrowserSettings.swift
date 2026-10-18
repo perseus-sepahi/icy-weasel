@@ -56,6 +56,9 @@ final class BrowserSettings {
         static let cloudAIProviders = "cloudAIProviders"
         static let cloudAIConsent = "cloudAIConsent"
         static let trustedLocalAI = "trustedLocalAI"
+        static let localAILaunchers = "localAILaunchers"
+        static let offerToSavePasswords = "offerToSavePasswords"
+        static let neverSavePasswordHosts = "neverSavePasswordHosts"
         static let appearance = "appearance"
     }
 
@@ -100,6 +103,25 @@ final class BrowserSettings {
             return (try? JSONDecoder().decode([CloudProviderConfig].self, from: data)) ?? []
         }
         set { withMutation(keyPath: \.cloudAIProviders) { defaults.set(try? JSONEncoder().encode(newValue), forKey: Keys.cloudAIProviders) } }
+    }
+    /// Start scripts for local model servers (Bonsai and the like).
+    var localAILaunchers: [LocalAILauncher] {
+        get {
+            access(keyPath: \.localAILaunchers)
+            guard let data = defaults.data(forKey: Keys.localAILaunchers) else { return [] }
+            return (try? JSONDecoder().decode([LocalAILauncher].self, from: data)) ?? []
+        }
+        set { withMutation(keyPath: \.localAILaunchers) { defaults.set(try? JSONEncoder().encode(newValue), forKey: Keys.localAILaunchers) } }
+    }
+    /// Offer to save passwords typed into sign-in forms.
+    var offerToSavePasswords: Bool {
+        get { access(keyPath: \.offerToSavePasswords); return defaults.object(forKey: Keys.offerToSavePasswords) as? Bool ?? true }
+        set { withMutation(keyPath: \.offerToSavePasswords) { defaults.set(newValue, forKey: Keys.offerToSavePasswords) } }
+    }
+    /// Sites the user said never to save passwords for.
+    var neverSavePasswordHosts: [String] {
+        get { access(keyPath: \.neverSavePasswordHosts); return defaults.stringArray(forKey: Keys.neverSavePasswordHosts) ?? [] }
+        set { withMutation(keyPath: \.neverSavePasswordHosts) { defaults.set(newValue, forKey: Keys.neverSavePasswordHosts) } }
     }
     /// Unrecognised local servers the user picked, and so trusts with page text.
     var trustedLocalAI: [String] {

@@ -57,6 +57,9 @@ struct BrowserContent: View {
             if model.showFindBar {
                 FindBar(model: model)
             }
+            if let tab = model.selectedTab, let offer = tab.passwordOffer {
+                PasswordSaveBar(tab: tab, offer: offer)
+            }
             // A thin bright edge where the glass meets the page, like cut ice.
             LinearGradient(colors: [Theme.rim.opacity(0.5), Theme.ice.opacity(0.35), Theme.rim.opacity(0.5)],
                            startPoint: .leading, endPoint: .trailing)

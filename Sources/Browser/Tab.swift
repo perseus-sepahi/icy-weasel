@@ -50,6 +50,21 @@ final class Tab: NSObject, Identifiable {
     /// Asleep: it had a page, and its content process was released to save
     /// memory. An empty New Tab without a web view isn't asleep, just unused.
     var isHibernated: Bool { webView == nil && (url != nil || interactionState != nil) }
+
+    /// A password the user just signed in with, waiting for "Save" or "Not now".
+    struct PasswordOffer: Equatable {
+        let host: String
+        let username: String
+        let password: String
+        let isUpdate: Bool
+    }
+    var passwordOffer: PasswordOffer?
+    /// Saved sign-ins for the site whose password field is showing in this tab.
+    private(set) var availableLogins: [SavedLogin] = []
+    /// The frame (and its site) where a password field was found; filling only
+    /// ever targets this frame, and only for logins saved for its exact host.
+    private var passwordFrame: WKFrameInfo?
+    private var passwordHost: String?
     var lastActive = Date()
     var favicon: NSImage?
 
@@ -175,10 +190,10 @@ final class Tab: NSObject, Identifiable {
         isLoading = false
         observations.forEach { $0.invalidate() }
         observations.removeAll()
-        webView.configuration.userContentController.removeScriptMessageHandler(
-            forName: ScriptInjector.blockedMessageHandler,
-            contentWorld: ScriptInjector.isolatedWorld
-        )
+        for name in [ScriptInjector.blockedMessageHandler, ScriptInjector.passwordMessageHandler] {
+            webView.configuration.userContentController.removeScriptMessageHandler(
+                forName: name, contentWorld: ScriptInjector.isolatedWorld)
+        }
         webView.navigationDelegate = nil
         webView.uiDelegate = nil
         webView.stopLoading()
@@ -295,6 +310,12 @@ extension Tab: WKNavigationDelegate {
         let sitePolicy = owner?.policyStore.resolve(url: target, settings: owner!.settings) ?? .permissive
         WebViewFactory.apply(sitePolicy, to: preferences)
         let isMainFrame = navigationAction.targetFrame?.isMainFrame == true
+        // This Mac has no certificate for localhost: WebKit's HTTPS upgrade would
+        // fail and leave a blank page. Local servers (AI tools, dev servers) load
+        // as requested, matching the loopback exemption in the security rules.
+        if #available(macOS 15.2, *), Self.isLoopback(target) {
+            preferences.preferredHTTPSNavigationPolicy = .keepAsRequested
+        }
 
         // A real click or key press, not a script's synthetic one.
         let activation = UserInput.recentActivation(in: webView.window)
@@ -442,6 +463,9 @@ extension Tab: WKNavigationDelegate {
     /// figure must restart too — otherwise the second page's count is compared
     /// against the first page's total and its blocks are never counted.
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        passwordFrame = nil
+        passwordHost = nil
+        availableLogins = []
         dialogCount = 0
         dialogsSuppressed = false
         blockedEstimate = 0
@@ -698,10 +722,11 @@ extension Tab: WKScriptMessageHandler {
         _ userContentController: WKUserContentController,
         didReceive message: WKScriptMessage
     ) {
+        guard message.world == ScriptInjector.isolatedWorld else { return }
+        if message.name == ScriptInjector.passwordMessageHandler { handlePasswordMessage(message); return }
         // Only the isolated world can reach this handler, but validate anyway:
         // it is cheap, and a counter should never be able to go wild.
         guard message.name == ScriptInjector.blockedMessageHandler,
-              message.world == ScriptInjector.isolatedWorld,
               message.frameInfo.isMainFrame,
               let body = message.body as? [String: Any],
               let count = body["count"] as? Int,
@@ -710,5 +735,99 @@ extension Tab: WKScriptMessageHandler {
         let delta = max(0, count - blockedEstimate)
         blockedEstimate = count
         owner?.blocking.sessionBlockEstimate += delta
+    }
+}
+
+// MARK: - Passwords
+
+extension Tab {
+    /// The site a frame belongs to, from WebKit's own record of its origin.
+    /// Only HTTPS (or this Mac) can save or fill: on plain HTTP a password
+    /// would travel unencrypted anyway, and the network could alter the page.
+    static func passwordHost(of frame: WKFrameInfo) -> String? {
+        let origin = frame.securityOrigin
+        let host = origin.host.lowercased()
+        guard !host.isEmpty else { return nil }
+        if origin.protocol == "https" { return host }
+        if origin.protocol == "http", ["localhost", "127.0.0.1"].contains(host) { return host }
+        return nil
+    }
+
+    fileprivate func handlePasswordMessage(_ message: WKScriptMessage) {
+        guard let body = message.body as? [String: Any], let type = body["type"] as? String,
+              let host = Self.passwordHost(of: message.frameInfo) else { return }
+        switch type {
+        case "formFound":
+            // The main frame wins over iframes; otherwise the first form found.
+            guard passwordFrame == nil || message.frameInfo.isMainFrame else { return }
+            passwordFrame = message.frameInfo
+            passwordHost = host
+            availableLogins = PasswordStore.logins(for: host)
+        case "submitted":
+            guard !isPrivate, let settings = owner?.settings, settings.offerToSavePasswords,
+                  !settings.neverSavePasswordHosts.contains(host),
+                  let password = body["password"] as? String, !password.isEmpty, password.count <= 1_000,
+                  let username = (body["username"] as? String).map({ String($0.prefix(500)) }) else { return }
+            let existing = PasswordStore.logins(for: host).first { $0.username == username }
+            if let existing, PasswordStore.password(for: existing) == password { return }   // already saved
+            passwordOffer = PasswordOffer(host: host, username: username, password: password, isUpdate: existing != nil)
+        default:
+            return
+        }
+    }
+
+    func savePasswordOffer() {
+        guard let offer = passwordOffer else { return }
+        PasswordStore.save(host: offer.host, username: offer.username, password: offer.password)
+        passwordOffer = nil
+        if offer.host == passwordHost { availableLogins = PasswordStore.logins(for: offer.host) }
+    }
+
+    func neverSavePasswords() {
+        guard let offer = passwordOffer else { return }
+        if owner?.settings.neverSavePasswordHosts.contains(offer.host) == false {
+            owner?.settings.neverSavePasswordHosts.append(offer.host)
+        }
+        passwordOffer = nil
+    }
+
+    func dismissPasswordOffer() { passwordOffer = nil }
+
+    /// Fills a saved sign-in into the frame that showed the form. Only ever
+    /// called from the user clicking the key button, never automatically: a
+    /// page could otherwise hide a form to collect filled-in passwords.
+    @discardableResult
+    func fill(_ login: SavedLogin) async -> Bool {
+        guard let webView, let frame = passwordFrame, Self.passwordHost(of: frame) == login.host,
+              login.host == passwordHost, let password = PasswordStore.password(for: login) else { return false }
+        let script = """
+            const visible = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+            const fields = Array.from(document.querySelectorAll('input[type="password"]')).filter(visible);
+            const active = document.activeElement;
+            const pw = (active && fields.includes(active)) ? active : fields[0];
+            if (!pw) return false;
+            const set = (el, value) => {
+              Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, value);
+              el.dispatchEvent(new Event("input", { bubbles: true }));
+              el.dispatchEvent(new Event("change", { bubbles: true }));
+            };
+            const scope = pw.form || document;
+            let user = scope.querySelector('input[autocomplete~="username"], input[autocomplete~="email"]');
+            if (!user || user === pw || !visible(user)) {
+              user = null;
+              const inputs = Array.from(scope.querySelectorAll("input"));
+              for (let i = inputs.indexOf(pw) - 1; i >= 0; i--) {
+                const t = (inputs[i].getAttribute("type") || "text").toLowerCase();
+                if (["text", "email", "tel"].includes(t) && visible(inputs[i])) { user = inputs[i]; break; }
+              }
+            }
+            if (user && username) set(user, username);
+            set(pw, password);
+            return true;
+            """
+        let result = try? await webView.callAsyncJavaScript(
+            script, arguments: ["username": login.username, "password": password],
+            in: frame, contentWorld: ScriptInjector.isolatedWorld)
+        return (result as? Bool) == true
     }
 }

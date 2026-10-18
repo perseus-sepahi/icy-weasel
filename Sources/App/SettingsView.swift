@@ -12,6 +12,8 @@ struct SettingsView: View {
                 .tabItem { Label("General", systemImage: "gearshape") }
             AISettingsView()
                 .tabItem { Label("AI", systemImage: "sparkles") }
+            PasswordSettingsView()
+                .tabItem { Label("Passwords", systemImage: "key") }
             PrivacyDataSettings()
                 .tabItem { Label("Data", systemImage: "externaldrive.badge.xmark") }
         }

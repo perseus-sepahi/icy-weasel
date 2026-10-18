@@ -28,6 +28,12 @@ struct AISource: Identifiable, Hashable, Sendable {
     /// A server merely answering on a common port (8000, 8080…) could be any
     /// program, so it is listed but never used until the user picks it.
     var isVerified: Bool = true
+    /// Where page text actually ends up, when that isn't `baseURL`: Ollama's
+    /// cloud models are reached through the local app but run on ollama.com.
+    var remoteHost: String? = nil
+
+    /// The host shown to the user as the destination of page text.
+    var destinationHost: String { remoteHost ?? baseURL.host ?? name }
 }
 
 struct AIModelChoice: Identifiable, Hashable, Sendable {
@@ -35,12 +41,22 @@ struct AIModelChoice: Identifiable, Hashable, Sendable {
     let model: String
     var sizeBytes: Int64?
     var id: String { "\(source.id)|\(model)" }
+
+    /// llama.cpp reports a model by its file path; show just the model's name.
+    var displayName: String {
+        var name = (model as NSString).lastPathComponent
+        if name.lowercased().hasSuffix(".gguf") { name = String(name.dropLast(5)) }
+        return name
+    }
 }
 
 // MARK: - Cloud providers (user's own API key)
 
 enum CloudPreset: String, Codable, CaseIterable, Identifiable, Sendable {
-    case openAI, anthropic, gemini, openRouter, groq, mistral, deepSeek, custom
+    case openAI, anthropic, gemini, openRouter, groq, mistral, deepSeek
+    /// Hosts of open-source models (Llama, Qwen, DeepSeek, Mistral, Gemma…).
+    case ollamaCloud, huggingFace, together, fireworks, deepInfra, cerebras
+    case custom
     var id: String { rawValue }
 
     var title: String {
@@ -52,6 +68,12 @@ enum CloudPreset: String, Codable, CaseIterable, Identifiable, Sendable {
         case .groq: return "Groq"
         case .mistral: return "Mistral"
         case .deepSeek: return "DeepSeek"
+        case .ollamaCloud: return "Ollama Cloud (open models)"
+        case .huggingFace: return "Hugging Face (open models)"
+        case .together: return "Together AI (open models)"
+        case .fireworks: return "Fireworks AI (open models)"
+        case .deepInfra: return "DeepInfra (open models)"
+        case .cerebras: return "Cerebras (open models)"
         case .custom: return "Other (OpenAI-compatible)"
         }
     }
@@ -65,11 +87,23 @@ enum CloudPreset: String, Codable, CaseIterable, Identifiable, Sendable {
         case .groq: return "https://api.groq.com/openai/v1"
         case .mistral: return "https://api.mistral.ai/v1"
         case .deepSeek: return "https://api.deepseek.com/v1"
+        case .ollamaCloud: return "https://ollama.com"
+        case .huggingFace: return "https://router.huggingface.co/v1"
+        case .together: return "https://api.together.xyz/v1"
+        case .fireworks: return "https://api.fireworks.ai/inference/v1"
+        case .deepInfra: return "https://api.deepinfra.com/v1/openai"
+        case .cerebras: return "https://api.cerebras.ai/v1"
         case .custom: return ""
         }
     }
 
-    var kind: AISource.Kind { self == .anthropic ? .anthropic : .openAI }
+    var kind: AISource.Kind {
+        switch self {
+        case .anthropic: return .anthropic
+        case .ollamaCloud: return .ollama
+        default: return .openAI
+        }
+    }
 }
 
 struct CloudProviderConfig: Codable, Identifiable, Hashable, Sendable {
@@ -156,6 +190,7 @@ enum LocalAIDiscovery {
         .init(port: 1234, name: "LM Studio", kind: .openAI),
         .init(port: 8080, name: "llama.cpp server", kind: .openAI),   // Bonsai's start_llama_server.sh, AI Navigator
         .init(port: 8081, name: "MLX server", kind: .openAI),         // Bonsai's start_mlx_server.sh
+        .init(port: 9931, name: "llama.cpp server", kind: .openAI),   // llama.cpp's announced new default
         .init(port: 1337, name: "Jan", kind: .openAI),
         .init(port: 4891, name: "GPT4All", kind: .openAI),
         .init(port: 8000, name: "Local server", kind: .openAI),
@@ -194,12 +229,14 @@ enum LocalAIDiscovery {
     }
 
     /// Probes every known port plus the user's own local addresses, in parallel.
-    static func discover(customEndpoints: [String]) async -> [AIModelChoice] {
+    /// `launcherPorts`: ports of servers the user set up a start script for,
+    /// which makes them known rather than "something on a common port".
+    static func discover(customEndpoints: [String], launcherPorts: Set<Int> = []) async -> [AIModelChoice] {
         var targets: [(AISource, Bool)] = candidates.map { c in
             let root = URL(string: "http://127.0.0.1:\(c.port)")!
             let base = c.kind == .ollama ? root : root.appendingPathComponent("v1")
             return (AISource(id: "local:\(c.port)", name: c.name, kind: c.kind, baseURL: base, isLocal: true,
-                             isVerified: c.kind == .ollama), false)
+                             isVerified: c.kind == .ollama || launcherPorts.contains(c.port)), false)
         }
         for raw in customEndpoints {
             guard var url = loopbackURL(raw) else { continue }
@@ -226,10 +263,22 @@ enum LocalAIDiscovery {
             case .ollama:
                 let (data, response) = try await probeSession.data(from: source.baseURL.appendingPathComponent("api/tags"))
                 guard (response as? HTTPURLResponse)?.statusCode == 200 else { return [] }
-                struct Tags: Decodable { struct Model: Decodable { let name: String; let size: Int64? }; let models: [Model] }
+                struct Tags: Decodable {
+                    struct Model: Decodable { let name: String; let size: Int64?; let remote_host: String? }
+                    let models: [Model]
+                }
+                // Ollama's "cloud" models are listed by the local app but run on
+                // ollama.com: they're cloud models for privacy purposes.
+                let cloudSource = AISource(id: "\(source.id):cloud", name: "Ollama Cloud", kind: .ollama,
+                                           baseURL: source.baseURL, isLocal: false, isVerified: true,
+                                           remoteHost: "ollama.com")
                 return try JSONDecoder().decode(Tags.self, from: data).models
                     .filter { isChatModel($0.name) }
-                    .map { AIModelChoice(source: source, model: $0.name, sizeBytes: $0.size) }
+                    .map { m in
+                        let remote = source.isLocal && (m.remote_host != nil || isOllamaCloudModel(m.name))
+                        return AIModelChoice(source: remote ? cloudSource : source, model: m.name,
+                                             sizeBytes: remote ? nil : m.size)
+                    }
             case .openAI, .anthropic:
                 var request = URLRequest(url: source.baseURL.appendingPathComponent("models"))
                 request.timeoutInterval = source.isLocal ? 1.5 : 10
@@ -244,13 +293,18 @@ enum LocalAIDiscovery {
                 // Name a generic llama.cpp/MLX server after the model it serves.
                 let renamed = source.isLocal && ids.contains { $0.lowercased().contains("bonsai") }
                     ? AISource(id: source.id, name: "Bonsai", kind: source.kind, baseURL: source.baseURL, isLocal: true,
-                               isVerified: source.isVerified)
+                               isVerified: source.isVerified, remoteHost: nil)
                     : source
                 return ids.map { AIModelChoice(source: renamed, model: $0) }
             }
         } catch {
             return []
         }
+    }
+
+    static func isOllamaCloudModel(_ name: String) -> Bool {
+        let lower = name.lowercased()
+        return lower.hasSuffix("-cloud") || lower.hasSuffix(":cloud") || lower.contains("-cloud:")
     }
 
     /// Excludes models that can't chat (embeddings, speech, image generation).
@@ -388,5 +442,46 @@ enum AIClient {
         }
         while out.first?.role == "assistant" { out.removeFirst() }
         return out
+    }
+}
+
+// MARK: - Start scripts
+
+/// A model server that starts from a script rather than an app, such as
+/// Bonsai's `start_llama_server.sh`. The browser is sandboxed and can't see
+/// those files on its own, so the user picks the script once; a security-scoped
+/// bookmark remembers it, and "Start" hands it to Terminal to run.
+struct LocalAILauncher: Codable, Identifiable, Hashable, Sendable {
+    var id = UUID().uuidString
+    var name: String
+    var bookmark: Data
+    /// Where the server listens once started.
+    var port: Int
+
+    /// Bonsai's scripts: llama.cpp on 8080, MLX on 8081.
+    static func defaults(for script: URL) -> (name: String, port: Int) {
+        let path = script.path.lowercased()
+        let name = path.contains("bonsai") ? "Bonsai" : script.deletingPathExtension().lastPathComponent
+        return (name, path.contains("mlx") ? 8081 : 8080)
+    }
+
+    func resolvedURL() -> URL? {
+        var stale = false
+        return try? URL(resolvingBookmarkData: bookmark, options: .withSecurityScope, relativeTo: nil,
+                        bookmarkDataIsStale: &stale)
+    }
+
+    /// Opens the script in Terminal, which runs it in a window the user can see and stop.
+    @MainActor
+    func start() -> Bool {
+        guard let url = resolvedURL(),
+              let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else { return false }
+        let scoped = url.startAccessingSecurityScopedResource()
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = false
+        NSWorkspace.shared.open([url], withApplicationAt: terminal, configuration: configuration) { _, _ in
+            if scoped { url.stopAccessingSecurityScopedResource() }
+        }
+        return true
     }
 }

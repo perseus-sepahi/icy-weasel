@@ -65,11 +65,9 @@ enum WebViewFactory {
             // The controller retains its handlers strongly, and the tab owns the
             // web view that owns this controller. A direct add would be a cycle
             // that leaks every closed tab's entire content process.
-            controller.add(
-                WeakScriptMessageHandler(messageHandler),
-                contentWorld: ScriptInjector.isolatedWorld,
-                name: ScriptInjector.blockedMessageHandler
-            )
+            for name in [ScriptInjector.blockedMessageHandler, ScriptInjector.passwordMessageHandler] {
+                controller.add(WeakScriptMessageHandler(messageHandler), contentWorld: ScriptInjector.isolatedWorld, name: name)
+            }
         }
         for list in ruleLists { controller.add(list) }
         config.userContentController = controller
@@ -97,6 +95,9 @@ enum WebViewFactory {
         }
         if let counter = ScriptInjector.blockCounter() {
             controller.addUserScript(counter)
+        }
+        if let passwords = ScriptInjector.passwordManager() {
+            controller.addUserScript(passwords)
         }
     }
 

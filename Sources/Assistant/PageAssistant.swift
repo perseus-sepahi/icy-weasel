@@ -44,6 +44,8 @@ final class PageAssistant {
     /// Settable inside the module so tests can stage cloud choices without a network.
     internal(set) var choices: [AIModelChoice] = []
     private(set) var stoppedApps: [LocalAIDiscovery.StartableApp] = []
+    /// Start scripts (Bonsai…) whose server isn't answering.
+    private(set) var stoppedLaunchers: [LocalAILauncher] = []
     private(set) var status: Status = .unknown
     private(set) var isGenerating = false
     private(set) var contextNote = ""
@@ -107,7 +109,8 @@ final class PageAssistant {
 
     func refreshModels() async {
         status = .checking
-        var found = await LocalAIDiscovery.discover(customEndpoints: settings.customLocalAIEndpoints)
+        var found = await LocalAIDiscovery.discover(customEndpoints: settings.customLocalAIEndpoints,
+                                                    launcherPorts: Set(settings.localAILaunchers.map(\.port)))
         if !isPrivate {
             for config in settings.cloudAIProviders {
                 guard let source = config.source else { continue }
@@ -124,6 +127,7 @@ final class PageAssistant {
         choices = found
         let running = Set(found.compactMap { $0.source.isLocal ? $0.source.baseURL.port : nil })
         stoppedApps = LocalAIDiscovery.stoppedApps(running: running)
+        stoppedLaunchers = settings.localAILaunchers.filter { !running.contains($0.port) }
 
         if !found.isEmpty {
             status = .ready
@@ -132,6 +136,8 @@ final class PageAssistant {
             }
         } else if let app = stoppedApps.first {
             status = .unavailable("\(app.name) is installed but not running. Start it and the assistant will use its models.")
+        } else if let launcher = stoppedLaunchers.first {
+            status = .unavailable("\(launcher.name) isn't running. Start it and the assistant will use its model.")
         } else {
             status = .unavailable("""
                 No AI model found. Start a local model server, such as Ollama (ollama.com) or \
@@ -147,9 +153,22 @@ final class PageAssistant {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = false
         NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, _ in }
+        waitForServer(seconds: 15)
+    }
+
+    /// Runs a start script in Terminal, then waits for its model to load.
+    func start(_ launcher: LocalAILauncher) {
+        guard launcher.start() else {
+            status = .unavailable("Couldn't open \(launcher.name)'s start script. Choose it again in Settings > AI.")
+            return
+        }
+        waitForServer(seconds: 120)
+    }
+
+    private func waitForServer(seconds: Int) {
         status = .checking
         Task { [weak self] in
-            for _ in 0..<20 {
+            for _ in 0..<(seconds * 4 / 3) {
                 try? await Task.sleep(for: .milliseconds(750))
                 await self?.refreshModels()
                 if self?.status == .ready { return }
@@ -226,7 +245,7 @@ final class PageAssistant {
 
     private func requestConsent(for choice: AIModelChoice, question: String, webView: WKWebView?) {
         consentRequest = ConsentRequest(question: question, providerID: choice.source.id,
-                                        providerName: choice.source.name, host: choice.source.baseURL.host ?? "")
+                                        providerName: choice.source.name, host: choice.source.destinationHost)
         pendingWebView = webView
     }
 
