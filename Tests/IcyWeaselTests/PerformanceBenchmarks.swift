@@ -113,6 +113,26 @@ final class PerformanceBenchmarks: XCTestCase {
         print(report)
     }
 
+    /// Main-thread cost of ⌘T: empty tabs no longer build a web view.
+    func testOpeningEmptyTabs() {
+        let suite = "iw-perf-tabs-\(UUID().uuidString)"; let defaults = UserDefaults(suiteName: suite)!
+        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
+        let settings = BrowserSettings(defaults: defaults)
+        let model = BrowserViewModel(settings: settings, policyStore: SitePolicyStore(defaults: defaults),
+                                     blocking: BlockingEngine(settings: settings), downloads: DownloadManager())
+        var open: [Double] = [], wake: [Double] = []
+        for _ in 0..<15 {
+            var t0 = Date()
+            model.openTab(url: nil, inBackground: false)
+            open.append(Date().timeIntervalSince(t0) * 1000)
+            t0 = Date()
+            model.selectedTab?.wake()          // what every ⌘T used to do
+            wake.append(Date().timeIntervalSince(t0) * 1000)
+        }
+        print(String(format: "\n=== ⌘T ON THE MAIN THREAD (median of 15) ===\n  open empty tab now: %.2f ms\n  plus creating its web view (old behaviour): %.2f ms\n",
+                     median(open), median(wake)))
+    }
+
     // MARK: 4. Main-thread work in the library
 
     private func bigLibrary() throws -> (BrowsingLibrary, URL) {

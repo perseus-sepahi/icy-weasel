@@ -239,7 +239,7 @@ final class BrowserViewModel {
     func select(_ tab: Tab) {
         selectedTabID = tab.id
         if let group = tab.groupID, let i = groups.firstIndex(where: { $0.id == group }) { groups[i].isCollapsed = false }
-        tab.wake()
+        tab.activate()
         omniboxText = tab.url?.absoluteString ?? ""
     }
 
@@ -250,7 +250,7 @@ final class BrowserViewModel {
             closedTabs.append((url, tab.groupID))
             if closedTabs.count > 25 { closedTabs.removeFirst() }
         }
-        tab.hibernate()
+        tab.discard()
         tabs.remove(at: index)
         pruneEmptyGroups()
         sessionChanged()
@@ -395,13 +395,22 @@ final class BrowserViewModel {
         }
     }
 
+    /// The Mac is short of memory: put every background tab to sleep now,
+    /// whatever its idle time, except ones playing media or using the camera.
+    func relieveMemoryPressure() {
+        guard settings.hibernateTabs else { return }
+        for tab in tabs where tab.id != selectedTabID && !tab.isHibernated {
+            tab.hibernateIfQuiet()
+        }
+    }
+
     func hibernateIdleTabs() {
         guard settings.hibernateTabs else { return }
         let threshold = TimeInterval(max(1, settings.hibernateAfterMinutes) * 60)
         let now = Date()
         for tab in tabs where tab.id != selectedTabID && !tab.isHibernated {
             if now.timeIntervalSince(tab.lastActive) > threshold {
-                tab.hibernate()
+                tab.hibernateIfQuiet()
             }
         }
     }

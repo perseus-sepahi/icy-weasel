@@ -54,6 +54,23 @@ final class AppServices {
 
     private struct WeakBrowser { weak var model: BrowserViewModel? }
 
+    /// macOS says memory is running low: free background tabs right away
+    /// instead of waiting for their idle timers.
+    private var memoryPressure: DispatchSourceMemoryPressure?
+
+    private func watchMemoryPressure() {
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        source.setEventHandler { [weak self] in
+            MainActor.assumeIsolated { self?.relieveMemoryPressure() }
+        }
+        source.resume()
+        memoryPressure = source
+    }
+
+    func relieveMemoryPressure() {
+        windows.compactMap(\.model).forEach { $0.relieveMemoryPressure() }
+    }
+
     func register(_ browser: BrowserViewModel) {
         windows.removeAll { $0.model == nil || $0.model === browser }
         windows.append(WeakBrowser(model: browser))
@@ -72,6 +89,7 @@ final class AppServices {
         blocking = BlockingEngine(settings: settings)
         Self.shared = self
         settings.applyAppearance()
+        watchMemoryPressure()
         Task { await blocking.start() }
     }
 }

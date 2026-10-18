@@ -47,7 +47,9 @@ final class Tab: NSObject, Identifiable {
     var groupID: UUID?
     /// Pop-ups refused on the current page, offered back to the user in the toolbar.
     var blockedPopups: [URL] = []
-    var isHibernated: Bool { webView == nil }
+    /// Asleep: it had a page, and its content process was released to save
+    /// memory. An empty New Tab without a web view isn't asleep, just unused.
+    var isHibernated: Bool { webView == nil && (url != nil || interactionState != nil) }
     var lastActive = Date()
     var favicon: NSImage?
 
@@ -131,11 +133,46 @@ final class Tab: NSObject, Identifiable {
         return webView
     }
 
+    /// Makes the tab current. Only a tab with a page gets a web view: the New
+    /// Tab page is drawn by the app, so an empty tab costs no content process
+    /// (15–30 MB each) until it navigates. WebKit keeps a spare process warm,
+    /// so the first page loads just as fast.
+    func activate() {
+        lastActive = Date()
+        if url != nil || pendingURL != nil || interactionState != nil { wake() }
+    }
+
+    /// Puts the tab to sleep unless the user would notice: it's loading,
+    /// playing audio or video, or using the camera or microphone. A sleeping
+    /// music tab would simply go silent.
+    func hibernateIfQuiet() {
+        guard let webView, !isLoading,
+              webView.cameraCaptureState == .none, webView.microphoneCaptureState == .none else { return }
+        webView.requestMediaPlaybackState { [weak self] state in
+            MainActor.assumeIsolated {
+                guard let self, state != .playing, self.webView === webView, !self.isLoading else { return }
+                self.hibernate()
+            }
+        }
+    }
+
+    /// Closing the tab: release everything now, even mid-load.
+    func discard() {
+        guard webView != nil else { return }
+        tearDown(keepingState: false)
+    }
+
     /// Releases the content process. `interactionState` survives so waking
     /// restores history rather than just reloading the last URL.
     func hibernate() {
-        guard let webView, !isLoading else { return }
-        interactionState = webView.interactionState
+        guard webView != nil, !isLoading else { return }
+        tearDown(keepingState: true)
+    }
+
+    private func tearDown(keepingState: Bool) {
+        guard let webView else { return }
+        interactionState = keepingState ? webView.interactionState : nil
+        isLoading = false
         observations.forEach { $0.invalidate() }
         observations.removeAll()
         webView.configuration.userContentController.removeScriptMessageHandler(
@@ -146,7 +183,7 @@ final class Tab: NSObject, Identifiable {
         webView.uiDelegate = nil
         webView.stopLoading()
         self.webView = nil
-        log.debug("Hibernated tab \(self.displayTitle, privacy: .public)")
+        log.debug("Released tab \(self.displayTitle, privacy: .private)")
     }
 
     private func observe(_ webView: WKWebView) {
