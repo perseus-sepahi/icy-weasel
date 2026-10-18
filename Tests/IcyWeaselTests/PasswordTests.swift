@@ -99,6 +99,31 @@ final class PasswordTests: XCTestCase {
         XCTAssertFalse(crossSite, "a login is never filled into a different site")
     }
 
+    /// A frame can navigate to another site without the page changing; the
+    /// recorded frame is then stale. Filling must check the frame's live origin.
+    func testNeverFillsAFrameThatHasSinceGoneToAnotherSite() async throws {
+        PasswordStore.save(host: "login.icyweasel.test", username: "ana", password: "s3cret!")
+        let (_, tab, webView) = makeTab()
+        let done = expectation(description: "loaded")
+        let observation = webView.observe(\.isLoading, options: [.new]) { _, change in if change.newValue == false { done.fulfill() } }
+        webView.loadHTMLString("""
+            <html><body><iframe id="f" width="400" height="200"
+              srcdoc="<input type='email' autocomplete='username'><input type='password' id='p'>"></iframe></body></html>
+            """, baseURL: URL(string: "https://login.icyweasel.test/")!)
+        await fulfillment(of: [done], timeout: 10)
+        observation.invalidate()
+        try await Task.sleep(for: .milliseconds(800))
+        let login = try XCTUnwrap(tab.availableLogins.first, "the iframe's form was announced for login.icyweasel.test")
+
+        // The iframe now goes to a page with a different (opaque) origin.
+        _ = try await webView.evaluateJavaScript("""
+            document.getElementById('f').src = "data:text/html,<input type='password'>"; true
+            """)
+        try await Task.sleep(for: .milliseconds(800))
+        let filled = await tab.fill(login)
+        XCTAssertFalse(filled, "the password is not sent to a frame that left the site")
+    }
+
     func testPlainHTTPPagesNeverGetPasswords() async throws {
         PasswordStore.save(host: "plain.icyweasel.test", username: "ana", password: "x")
         let (_, tab, webView) = makeTab()

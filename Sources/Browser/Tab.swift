@@ -65,6 +65,10 @@ final class Tab: NSObject, Identifiable {
     /// ever targets this frame, and only for logins saved for its exact host.
     private var passwordFrame: WKFrameInfo?
     private var passwordHost: String?
+    /// The exact origin ("https://host[:port]") the form was found on. Checked
+    /// again inside the frame at fill time: a frame can navigate elsewhere
+    /// without the page changing, and the recorded WKFrameInfo would be stale.
+    private var passwordOrigin: String?
     var lastActive = Date()
     var favicon: NSImage?
 
@@ -465,6 +469,7 @@ extension Tab: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         passwordFrame = nil
         passwordHost = nil
+        passwordOrigin = nil
         availableLogins = []
         dialogCount = 0
         dialogsSuppressed = false
@@ -744,6 +749,13 @@ extension Tab {
     /// The site a frame belongs to, from WebKit's own record of its origin.
     /// Only HTTPS (or this Mac) can save or fill: on plain HTTP a password
     /// would travel unencrypted anyway, and the network could alter the page.
+    /// The exact origin string a page reports as `location.origin`.
+    static func originString(of frame: WKFrameInfo) -> String {
+        let o = frame.securityOrigin
+        let defaultPort = (o.protocol == "https" && o.port == 443) || (o.protocol == "http" && o.port == 80)
+        return "\(o.protocol)://\(o.host.lowercased())" + (o.port == 0 || defaultPort ? "" : ":\(o.port)")
+    }
+
     static func passwordHost(of frame: WKFrameInfo) -> String? {
         let origin = frame.securityOrigin
         let host = origin.host.lowercased()
@@ -758,10 +770,12 @@ extension Tab {
               let host = Self.passwordHost(of: message.frameInfo) else { return }
         switch type {
         case "formFound":
-            // The main frame wins over iframes; otherwise the first form found.
-            guard passwordFrame == nil || message.frameInfo.isMainFrame else { return }
+            // The main frame wins over iframes; among iframes the newest form wins
+            // (a frame that navigated announces its new document afresh).
+            guard passwordFrame == nil || message.frameInfo.isMainFrame || passwordFrame?.isMainFrame == false else { return }
             passwordFrame = message.frameInfo
             passwordHost = host
+            passwordOrigin = Self.originString(of: message.frameInfo)
             availableLogins = PasswordStore.logins(for: host)
         case "submitted":
             guard !isPrivate, let settings = owner?.settings, settings.offerToSavePasswords,
@@ -798,9 +812,11 @@ extension Tab {
     /// page could otherwise hide a form to collect filled-in passwords.
     @discardableResult
     func fill(_ login: SavedLogin) async -> Bool {
-        guard let webView, let frame = passwordFrame, Self.passwordHost(of: frame) == login.host,
+        guard let webView, let frame = passwordFrame, let origin = passwordOrigin, Self.passwordHost(of: frame) == login.host,
               login.host == passwordHost, let password = PasswordStore.password(for: login) else { return false }
         let script = """
+            // Fail closed if this frame now shows a different site than the form did.
+            if (location.origin !== expectedOrigin) return false;
             const visible = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
             const fields = Array.from(document.querySelectorAll('input[type="password"]')).filter(visible);
             const active = document.activeElement;
@@ -825,8 +841,12 @@ extension Tab {
             set(pw, password);
             return true;
             """
+        // Ask the frame where it is *before* any password goes to it.
+        let current = try? await webView.callAsyncJavaScript(
+            "return location.origin", arguments: [:], in: frame, contentWorld: ScriptInjector.isolatedWorld) as? String
+        guard current == origin else { return false }
         let result = try? await webView.callAsyncJavaScript(
-            script, arguments: ["username": login.username, "password": password],
+            script, arguments: ["username": login.username, "password": password, "expectedOrigin": origin],
             in: frame, contentWorld: ScriptInjector.isolatedWorld)
         return (result as? Bool) == true
     }
