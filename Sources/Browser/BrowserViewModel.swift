@@ -87,7 +87,9 @@ final class BrowserViewModel {
         self.library = privateWindow ? BrowsingLibrary(directory: nil) : (library ?? BrowsingLibrary(directory: nil))
         self.assistant = PageAssistant(settings: settings)
         self.restoresSession = restoreSession && !privateWindow
-        self.policyStore = policyStore
+        // Same for per-site settings: a private window starts from the saved
+        // ones but never writes the sites it visits to disk.
+        self.policyStore = privateWindow ? policyStore.ephemeralCopy() : policyStore
         self.blocking = blocking
         self.downloads = downloads
         self.isPrivateWindow = isPrivate || settings.ephemeralByDefault

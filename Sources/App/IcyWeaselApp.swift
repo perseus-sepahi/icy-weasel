@@ -81,6 +81,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Private windows share nothing with disk; standard windows keep
         // cookies but nothing that would outlive a "clear on quit".
         NSWindow.allowsAutomaticWindowTabbing = false
+        // Lets navigation code tell a real click from a script's synthetic one.
+        MainActor.assumeIsolated { UserInput.install() }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

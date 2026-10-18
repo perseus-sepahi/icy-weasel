@@ -63,6 +63,13 @@ final class Tab: NSObject, Identifiable {
     private var installedScriptsKey: String?
     /// Which rule families are attached (ads, transport/cookies). Internal for tests.
     private(set) var installedListsKey: String?
+    /// Where the main frame is going (or is). Sign-in prompts are only shown
+    /// for this site, never for a third-party frame or resource on it.
+    private var mainFrameTarget: URL?
+    /// JavaScript dialogs on the current page, and whether the user asked to
+    /// stop seeing them. Both reset when a new page commits.
+    private var dialogCount = 0
+    private var dialogsSuppressed = false
     /// The policy the attached rule lists were chosen for: the page being
     /// navigated to, which can differ from `url` until the load finishes.
     private var listsPolicy: ResolvedSitePolicy?
@@ -252,10 +259,18 @@ extension Tab: WKNavigationDelegate {
         WebViewFactory.apply(sitePolicy, to: preferences)
         let isMainFrame = navigationAction.targetFrame?.isMainFrame == true
 
+        // A real click or key press, not a script's synthetic one.
+        let activation = UserInput.recentActivation(in: webView.window)
+        let userActivated = navigationAction.navigationType == .linkActivated && activation != nil
+
         // ⌘-click opens a link in a background tab, like every other browser.
-        if navigationAction.navigationType == .linkActivated,
+        // Only for a real ⌘-click: a script's fake one would open tabs without
+        // limit. Only http(s): a data: page opened by the app would escape
+        // WebKit's block on top-level data: navigations.
+        if userActivated,
            navigationAction.modifierFlags.contains(.command),
-           ExternalSchemePolicy.webSchemes.contains(target.scheme?.lowercased() ?? "") {
+           activation?.modifiers.contains(.command) == true,
+           ["http", "https"].contains(target.scheme?.lowercased() ?? "") {
             decisionHandler(.cancel, preferences)
             owner?.openTab(url: target, inBackground: !navigationAction.modifierFlags.contains(.shift),
                            isPrivate: isPrivate, inheritGroupFrom: self)
@@ -269,7 +284,7 @@ extension Tab: WKNavigationDelegate {
 
         switch ExternalSchemePolicy.decide(
             url: target, isMainFrame: isMainFrame,
-            isUserClick: navigationAction.navigationType == .linkActivated
+            isUserClick: userActivated
         ) {
         case .web:
             break
@@ -390,6 +405,8 @@ extension Tab: WKNavigationDelegate {
     /// figure must restart too — otherwise the second page's count is compared
     /// against the first page's total and its blocks are never counted.
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        dialogCount = 0
+        dialogsSuppressed = false
         blockedEstimate = 0
         blockedPopups = []
         pendingUpgrade = nil
@@ -468,6 +485,13 @@ extension Tab: WKNavigationDelegate {
         guard passwordMethods.contains(space.authenticationMethod), challenge.previousFailureCount < 3 else {
             completionHandler(.performDefaultHandling, nil); return
         }
+        // Only the site you are on may ask. A third-party frame or image
+        // asking for a password is a classic way to phish one.
+        let pageSite = PublicSuffix.registrableDomain(of: mainFrameTarget ?? webView.url)
+        guard let pageSite, PublicSuffix.registrableDomain(ofHost: space.host) == pageSite,
+              let window = webView.window else {
+            completionHandler(.performDefaultHandling, nil); return
+        }
         let alert = NSAlert()
         alert.messageText = "Sign in to \(space.host)"
         alert.informativeText = space.receivesCredentialSecurely
@@ -479,11 +503,15 @@ extension Tab: WKNavigationDelegate {
         alert.accessoryView = stack
         alert.addButton(withTitle: "Sign In"); alert.addButton(withTitle: "Cancel")
         alert.window.initialFirstResponder = user
-        if alert.runModal() == .alertFirstButtonReturn {
-            // Session-only: never written to the keychain without being asked.
-            completionHandler(.useCredential, URLCredential(user: user.stringValue, password: pass.stringValue, persistence: .forSession))
-        } else {
-            completionHandler(.cancelAuthenticationChallenge, nil)
+        // A sheet on this window, not an app-wide modal: the prompt is visibly
+        // attached to the page that asked.
+        alert.beginSheetModal(for: window) { response in
+            if response == .alertFirstButtonReturn {
+                // Session-only: never written to the keychain without being asked.
+                completionHandler(.useCredential, URLCredential(user: user.stringValue, password: pass.stringValue, persistence: .forSession))
+            } else {
+                completionHandler(.cancelAuthenticationChallenge, nil)
+            }
         }
     }
 
@@ -491,6 +519,7 @@ extension Tab: WKNavigationDelegate {
     /// lists and its user scripts (fingerprint seed, per-site toggles).
     func prepareMainFrameNavigation(to target: URL, policy sitePolicy: ResolvedSitePolicy) {
         guard let webView else { return }
+        mainFrameTarget = target
         installRuleLists(for: sitePolicy, force: false)
         let key = Self.scriptsKey(url: target, policy: sitePolicy)
         if key != installedScriptsKey {
@@ -532,35 +561,59 @@ extension Tab: WKUIDelegate {
         guard let target = navigationAction.request.url else { return nil }
         let decision = PopupPolicy.decide(
             target: target, opener: webView.url,
-            isLinkClick: navigationAction.navigationType == .linkActivated,
+            isLinkClick: navigationAction.navigationType == .linkActivated
+                && UserInput.recentActivation(in: webView.window) != nil,
             siteAllowsPopups: policy.allowPopups
         )
         switch decision {
         case .open:
             owner?.openTab(url: target, inBackground: false, isPrivate: isPrivate)
         case .block:
-            if !blockedPopups.contains(target), blockedPopups.count < 20 { blockedPopups.append(target) }
+            // Offered back only if it's a normal web address: reopening a
+            // data: or javascript: pop-up from the app would bypass WebKit's guards.
+            if ["http", "https"].contains(target.scheme?.lowercased() ?? ""),
+               !blockedPopups.contains(target), blockedPopups.count < 20 { blockedPopups.append(target) }
         }
         return nil
     }
 
-    // MARK: JavaScript dialogs — unimplemented, alert/confirm/prompt silently no-op.
+    // MARK: JavaScript dialogs
 
     private func dialogTitle(_ frame: WKFrameInfo) -> String {
         "\(frame.securityOrigin.host.isEmpty ? "This page" : frame.securityOrigin.host) says"
     }
 
+    /// Shows a page's dialog as a sheet on its own window. From the second
+    /// dialog on, the user can stop the page from showing more; suppressed or
+    /// window-less dialogs resolve as if dismissed.
+    private func present(_ alert: NSAlert, in webView: WKWebView, dismissed: @escaping () -> Void,
+                         completion: @escaping (NSApplication.ModalResponse) -> Void) {
+        guard !dialogsSuppressed, let window = webView.window else { dismissed(); return }
+        dialogCount += 1
+        if dialogCount > 1 {
+            alert.showsSuppressionButton = true
+            alert.suppressionButton?.title = "Don't show more dialogs from this page"
+        }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            if alert.suppressionButton?.state == .on { self?.dialogsSuppressed = true }
+            completion(response)
+        }
+    }
+
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
         let alert = NSAlert(); alert.messageText = dialogTitle(frame); alert.informativeText = String(message.prefix(2000))
-        alert.addButton(withTitle: "OK"); alert.runModal(); completionHandler()
+        alert.addButton(withTitle: "OK")
+        present(alert, in: webView, dismissed: completionHandler) { _ in completionHandler() }
     }
 
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
         let alert = NSAlert(); alert.messageText = dialogTitle(frame); alert.informativeText = String(message.prefix(2000))
         alert.addButton(withTitle: "OK"); alert.addButton(withTitle: "Cancel")
-        completionHandler(alert.runModal() == .alertFirstButtonReturn)
+        present(alert, in: webView, dismissed: { completionHandler(false) }) {
+            completionHandler($0 == .alertFirstButtonReturn)
+        }
     }
 
     func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?,
@@ -569,7 +622,9 @@ extension Tab: WKUIDelegate {
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24)); field.stringValue = defaultText ?? ""
         alert.accessoryView = field; alert.addButton(withTitle: "OK"); alert.addButton(withTitle: "Cancel")
         alert.window.initialFirstResponder = field
-        completionHandler(alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil)
+        present(alert, in: webView, dismissed: { completionHandler(nil) }) {
+            completionHandler($0 == .alertFirstButtonReturn ? field.stringValue : nil)
+        }
     }
 
     /// `<input type="file">`. Without this, upload buttons do nothing. The page

@@ -29,6 +29,9 @@ enum ExternalSchemePolicy {
 
     static func decide(url: URL, isMainFrame: Bool, isUserClick: Bool) -> Decision {
         guard let scheme = url.scheme?.lowercased() else { return .block(reason: "no scheme") }
+        // A data: URL as a whole page is a phishing vehicle: it shows no
+        // real site in the address bar. Fine inside frames and as resources.
+        if scheme == "data", isMainFrame { return .block(reason: "data: URLs can't open as a page") }
         if webSchemes.contains(scheme) { return .web }
         if forbiddenSchemes.contains(scheme) { return .block(reason: "\(scheme): is never opened from web content") }
         // Subframes and script-driven redirects cannot launch apps: that is how

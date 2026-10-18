@@ -62,9 +62,14 @@ struct ResolvedSitePolicy: Equatable, Sendable {
 /// spreads itself across subdomains.
 @Observable
 final class SitePolicyStore {
-    private let defaults: UserDefaults
+    /// nil for a private window's store: nothing it learns is ever written.
+    private let defaults: UserDefaults?
     private let storageKey = "siteOverrides"
     private var overrides: [String: SiteOverride]
+
+    /// True for private windows. Their per-site changes live in memory only,
+    /// so a private window never records which sites it visited.
+    var isEphemeral: Bool { defaults == nil }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -74,6 +79,17 @@ final class SitePolicyStore {
         } else {
             overrides = [:]
         }
+    }
+
+    private init(ephemeralOverrides: [String: SiteOverride]) {
+        defaults = nil
+        overrides = ephemeralOverrides
+    }
+
+    /// A private window's store: starts from your saved per-site settings so
+    /// they still apply, but changes made in the window are never persisted.
+    func ephemeralCopy() -> SitePolicyStore {
+        SitePolicyStore(ephemeralOverrides: overrides)
     }
 
     var customisedSites: [String] { overrides.keys.sorted() }
@@ -120,84 +136,148 @@ final class SitePolicyStore {
     }
 
     private func persist() {
-        guard let data = try? JSONEncoder().encode(overrides) else { return }
+        guard let defaults, let data = try? JSONEncoder().encode(overrides) else { return }
         defaults.set(data, forKey: storageKey)
     }
 }
 
-/// Derives the registrable domain ("eTLD+1") from a URL.
+/// Derives the registrable domain ("eTLD+1") from a URL using Mozilla's full
+/// Public Suffix List, ICANN and private sections, bundled with the app.
 ///
-/// A full Public Suffix List is ~10k entries and changes monthly. This carries
-/// the multi-label suffixes that actually show up in browsing and falls back to
-/// the last two labels. The failure mode is conservative: an unknown multi-label
-/// suffix groups a site slightly too broadly for *user preferences*, which is a
-/// UI annoyance, not a security boundary. Nothing security-critical keys off it.
+/// This is a security boundary: per-site exemptions (ad blocking, HTTPS-only,
+/// JIT hardening, pop-ups) and third-party checks key off it. A short built-in
+/// list used to group `alice.example-host.app` with every other customer of
+/// that host, so relaxing protection for one site relaxed it for all of them.
 enum PublicSuffix {
-    private static let multiLabelSuffixes: Set<String> = [
-        "co.uk", "org.uk", "me.uk", "ltd.uk", "plc.uk", "net.uk", "sch.uk", "ac.uk", "gov.uk",
-        "com.au", "net.au", "org.au", "edu.au", "gov.au", "id.au",
-        "co.nz", "net.nz", "org.nz", "govt.nz", "ac.nz",
-        "co.za", "org.za", "net.za", "web.za",
-        "com.br", "net.br", "org.br", "gov.br", "edu.br",
-        "com.mx", "org.mx", "gob.mx",
-        "co.jp", "or.jp", "ne.jp", "ac.jp", "go.jp", "lg.jp",
-        "co.kr", "or.kr", "ne.kr", "go.kr", "re.kr",
-        "com.cn", "net.cn", "org.cn", "gov.cn", "edu.cn", "ac.cn",
-        "com.hk", "org.hk", "net.hk", "edu.hk", "gov.hk",
-        "com.tw", "org.tw", "net.tw", "gov.tw", "edu.tw",
-        "com.sg", "net.sg", "org.sg", "edu.sg", "gov.sg",
-        "com.tr", "org.tr", "net.tr", "gov.tr", "edu.tr",
-        "co.in", "net.in", "org.in", "gen.in", "firm.in", "ind.in", "gov.in", "ac.in",
-        "com.ar", "net.ar", "org.ar", "gob.ar",
-        "com.co", "net.co", "org.co", "gov.co",
-        "co.il", "org.il", "net.il", "ac.il", "gov.il",
-        "com.ua", "net.ua", "org.ua", "gov.ua",
-        "com.ru", "net.ru", "org.ru",
-        "com.pl", "net.pl", "org.pl", "gov.pl",
-        "com.es", "org.es", "nom.es", "gob.es",
-        "com.pt", "org.pt", "gov.pt",
-        "com.gr", "net.gr", "org.gr", "gov.gr", "edu.gr",
-        "com.my", "net.my", "org.my", "gov.my", "edu.my",
-        "com.ph", "net.ph", "org.ph", "gov.ph",
-        "com.vn", "net.vn", "org.vn", "gov.vn",
-        "com.sa", "net.sa", "org.sa", "gov.sa",
-        "com.eg", "net.eg", "org.eg", "gov.eg",
-        "com.ng", "net.ng", "org.ng", "gov.ng",
-        "co.ke", "or.ke", "ac.ke", "go.ke",
-        "github.io", "gitlab.io", "pages.dev", "workers.dev", "netlify.app",
-        "vercel.app", "herokuapp.com", "azurewebsites.net", "cloudfront.net",
-        "s3.amazonaws.com", "web.app", "firebaseapp.com", "glitch.me",
-        "blogspot.com", "wordpress.com", "tumblr.com", "myshopify.com",
-        "sharepoint.com", "onmicrosoft.com", "r2.dev", "fly.dev", "onrender.com"
-    ]
+
+    struct Rules {
+        var exact: Set<String> = []
+        /// `*.ck` is stored as `ck`: any single label under it is a suffix.
+        var wildcard: Set<String> = []
+        /// `!www.ck` is stored as `www.ck`: registrable despite a wildcard.
+        var exception: Set<String> = []
+    }
+
+    /// Parsed once, on first use (~16k lines, a few milliseconds).
+    static let rules: Rules = {
+        guard let url = Bundle.main.url(forResource: "public_suffix_list", withExtension: "dat")
+                ?? Bundle(for: BundleToken.self).url(forResource: "public_suffix_list", withExtension: "dat"),
+              let text = try? String(contentsOf: url, encoding: .utf8)
+        else { return Rules() }
+        return parse(text)
+    }()
+    private final class BundleToken {}
+
+    static func parse(_ text: String) -> Rules {
+        var rules = Rules()
+        for raw in text.split(whereSeparator: \.isNewline) {
+            // A rule is the first whitespace-delimited token of a non-comment line.
+            guard let token = raw.split(whereSeparator: \.isWhitespace).first, !token.hasPrefix("//") else { continue }
+            var rule = String(token).lowercased()
+            var target = \Rules.exact
+            if rule.hasPrefix("!") { rule.removeFirst(); target = \Rules.exception }
+            else if rule.hasPrefix("*.") { rule.removeFirst(2); target = \Rules.wildcard }
+            // Hosts reach us in ASCII ("xn--") form; store rules the same way.
+            guard let ascii = Punycode.asciiDomain(rule) else { continue }
+            rules[keyPath: target].insert(ascii)
+        }
+        return rules
+    }
 
     static func registrableDomain(of url: URL?) -> String? {
         guard let host = url?.host?.lowercased(), !host.isEmpty else { return nil }
         return registrableDomain(ofHost: host)
     }
 
-    static func registrableDomain(ofHost host: String) -> String? {
+    static func registrableDomain(ofHost rawHost: String, rules: Rules = PublicSuffix.rules) -> String? {
+        var host = rawHost.lowercased()
+        if host.hasSuffix(".") { host.removeLast() }
         guard !host.isEmpty else { return nil }
         // An IP literal is its own registrable unit.
         if host.allSatisfy({ $0.isNumber || $0 == "." }) || host.contains(":") { return host }
+        guard let asciiHost = Punycode.asciiDomain(host) else { return host }
 
-        let labels = host.split(separator: ".").map(String.init)
-        guard labels.count >= 2 else { return host }
+        let labels = asciiHost.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
+        guard labels.count >= 2, !labels.contains(where: \.isEmpty) else { return asciiHost }
 
-        if labels.count >= 3 {
-            let lastTwo = labels.suffix(2).joined(separator: ".")
-            if multiLabelSuffixes.contains(lastTwo) {
-                return labels.suffix(3).joined(separator: ".")
+        // Find the public suffix: the longest matching rule, exceptions first.
+        // With no match, the implicit rule "*" makes the last label the suffix.
+        var suffixLabelCount = 1
+        for i in 0..<labels.count {
+            let candidate = labels[i...].joined(separator: ".")
+            if rules.exception.contains(candidate) { suffixLabelCount = labels.count - i - 1; break }
+            if rules.exact.contains(candidate) { suffixLabelCount = labels.count - i; break }
+            if i + 1 < labels.count, rules.wildcard.contains(labels[(i + 1)...].joined(separator: ".")) {
+                suffixLabelCount = labels.count - i; break
             }
         }
-        return labels.suffix(2).joined(separator: ".")
+        // The host is itself a public suffix (e.g. github.io): it has no
+        // registrable parent, so it stands alone.
+        guard suffixLabelCount < labels.count else { return asciiHost }
+        return labels.suffix(suffixLabelCount + 1).joined(separator: ".")
     }
 
-    /// Third-party determination for URL sanitising and UI labelling.
+    /// Third-party determination for pop-ups, URL sanitising and UI labelling.
     static func isThirdParty(_ url: URL?, relativeTo pageURL: URL?) -> Bool {
         guard let a = registrableDomain(of: url), let b = registrableDomain(of: pageURL) else {
             return false
         }
         return a != b
+    }
+}
+
+/// RFC 3492 Punycode, just enough to turn a Unicode domain into its ASCII
+/// ("xn--") form so Public Suffix rules and URL hosts compare equal.
+enum Punycode {
+    static func asciiDomain(_ domain: String) -> String? {
+        var labels: [String] = []
+        for label in domain.split(separator: ".", omittingEmptySubsequences: false) {
+            if label.unicodeScalars.allSatisfy(\.isASCII) { labels.append(String(label)); continue }
+            guard let encoded = encode(String(label)) else { return nil }
+            labels.append("xn--" + encoded)
+        }
+        return labels.joined(separator: ".")
+    }
+
+    static func encode(_ input: String) -> String? {
+        let base = 36, tMin = 1, tMax = 26, skew = 38, damp = 700
+        let scalars = input.precomposedStringWithCanonicalMapping.lowercased().unicodeScalars.map { Int($0.value) }
+        func digit(_ d: Int) -> Character { Character(UnicodeScalar(UInt8(d < 26 ? d + 97 : d + 22))) }
+        func adapt(_ delta: Int, _ numPoints: Int, _ first: Bool) -> Int {
+            var delta = first ? delta / damp : delta / 2
+            delta += delta / numPoints
+            var k = 0
+            while delta > ((base - tMin) * tMax) / 2 { delta /= base - tMin; k += base }
+            return k + (base - tMin + 1) * delta / (delta + skew)
+        }
+        var output = String(scalars.filter { $0 < 0x80 }.map { Character(UnicodeScalar(UInt8($0))) })
+        let basicCount = output.count
+        var handled = basicCount
+        if basicCount > 0 { output.append("-") }
+        var n = 128, delta = 0, bias = 72
+        while handled < scalars.count {
+            guard let m = scalars.filter({ $0 >= n }).min() else { return nil }
+            delta += (m - n) * (handled + 1)
+            n = m
+            for c in scalars {
+                if c < n { delta += 1 }
+                if c == n {
+                    var q = delta, k = base
+                    while true {
+                        let t = k <= bias ? tMin : (k >= bias + tMax ? tMax : k - bias)
+                        if q < t { break }
+                        output.append(digit(t + (q - t) % (base - t)))
+                        q = (q - t) / (base - t)
+                        k += base
+                    }
+                    output.append(digit(q))
+                    bias = adapt(delta, handled + 1, handled == basicCount)
+                    delta = 0
+                    handled += 1
+                }
+            }
+            delta += 1; n += 1
+        }
+        return output
     }
 }

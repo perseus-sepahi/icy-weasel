@@ -255,8 +255,8 @@ is WebKit's per-request rule matching, paid on every resource a page loads.
   dropped rather than guessed.
 - The toolbar's blocked count is an **estimate**: WebKit does not report content-rule
   blocks to the app, so it counts third-party load failures and hidden elements.
-- Registrable-domain grouping uses a built-in list of common multi-label suffixes, not
-  the full Public Suffix List. It only affects how per-site settings are grouped.
+- Per-site settings group sites with Mozilla's full Public Suffix List (bundled, so it
+  updates with app releases rather than live).
 - DNS uses the system resolver (configure DNS-over-HTTPS system-wide for encrypted DNS).
 - **Not Chromium, and no Chrome extensions.** The engine is WebKit. Chrome Web Store
   extensions cannot be installed. macOS 15.4+ does ship a `WKWebExtension` API that can
@@ -357,4 +357,5 @@ Icy Weasel is licensed under the [Mozilla Public License 2.0](LICENSE).
 Filter lists are not bundled; the app downloads them at run time from their publishers,
 and each stays under its own license (EasyList and EasyPrivacy: GPLv3 or CC BY-SA 3.0;
 uBlock Origin filters: GPLv3; Peter Lowe's list and Fanboy's lists: their publishers'
-terms). Website and privacy policy: [perseus-sepahi.github.io/icy-weasel](https://perseus-sepahi.github.io/icy-weasel/).
+terms). The bundled Public Suffix List (`Resources/PublicSuffix`) is © Mozilla under
+MPL-2.0. Website and privacy policy: [perseus-sepahi.github.io/icy-weasel](https://perseus-sepahi.github.io/icy-weasel/).
