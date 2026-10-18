@@ -1,0 +1,169 @@
+/* Icy Weasel — the app's own palette: glacier navy, ice, aurora on frost. */
+:root {
+  --frost: #eef5fa;
+  --snow: #ffffff;
+  --glacier: #0f2b46;
+  --ink: #2a4560;
+  --muted: #5b7690;
+  --ice: #7dd4fc;
+  --deep-ice: #1f6fae;
+  --aurora: #8cf2e6;
+  --rule: #d3e3ee;
+  --display: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+  --body: "IBM Plex Sans", -apple-system, system-ui, sans-serif;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --frost: #0b1f33;
+    --snow: #10283f;
+    --glacier: #e6f3fb;
+    --ink: #c3d7e6;
+    --muted: #8ca8bf;
+    --deep-ice: #7dd4fc;
+    --rule: #1d3a55;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--frost);
+  color: var(--ink);
+  font: 400 1.0625rem/1.6 var(--body);
+}
+
+img { max-width: 100%; display: block; }
+
+a { color: var(--deep-ice); text-underline-offset: 0.18em; }
+a:hover { text-decoration-thickness: 2px; }
+
+:focus-visible { outline: 3px solid var(--ice); outline-offset: 3px; border-radius: 4px; }
+
+.wrap { width: min(1120px, 100% - 32px); margin-inline: auto; }
+.measure { max-width: 66ch; }
+
+/* Header */
+.site-header { padding: 22px 0; }
+.site-header .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.brand { display: flex; align-items: center; gap: 10px; color: var(--glacier); text-decoration: none;
+  font: 700 1.2rem/1 var(--display); }
+.brand img { width: 34px; height: 34px; }
+.site-nav { display: flex; gap: 22px; font-size: 0.95rem; }
+.site-nav a { color: var(--ink); text-decoration: none; }
+.site-nav a:hover { color: var(--deep-ice); }
+
+/* Hero: the one loud thing. A huge, tight headline over the real app. */
+.hero { padding: 56px 0 0; }
+.hero h1 {
+  margin: 0;
+  color: var(--glacier);
+  font: 700 clamp(2.6rem, 7.4vw, 6rem)/0.95 var(--display);
+  font-stretch: 80%;
+  letter-spacing: -0.025em;
+  max-width: 14ch;
+}
+.hero .lede { margin: 28px 0 0; font-size: 1.2rem; max-width: 56ch; }
+
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 18px; margin-top: 32px; }
+.button {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 14px 22px; border-radius: 999px;
+  background: var(--glacier); color: var(--frost);
+  font: 600 1rem/1 var(--body); text-decoration: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+.button:hover { background: var(--deep-ice); color: var(--snow); text-decoration: none; }
+@media (prefers-color-scheme: dark) { .button:hover { color: #0b1f33; } }
+.button svg { width: 18px; height: 18px; }
+.quiet { color: var(--muted); font-size: 0.95rem; }
+
+/* The screenshot sits on a pane of frosted ice that runs off the right edge. */
+.showcase { position: relative; margin-top: 64px; padding: 0 0 80px; }
+.showcase::before {
+  content: ""; position: absolute; inset: 48px -10vw 0 8%;
+  border-radius: 28px 0 0 28px;
+  background:
+    radial-gradient(60% 80% at 20% 10%, rgba(140, 242, 230, 0.55), transparent 70%),
+    radial-gradient(70% 90% at 90% 30%, rgba(125, 212, 252, 0.6), transparent 70%),
+    linear-gradient(160deg, #cfe8f7, #9ccbe8);
+}
+@media (prefers-color-scheme: dark) {
+  .showcase::before {
+    background:
+      radial-gradient(60% 80% at 20% 10%, rgba(140, 242, 230, 0.18), transparent 70%),
+      radial-gradient(70% 90% at 90% 30%, rgba(125, 212, 252, 0.22), transparent 70%),
+      linear-gradient(160deg, #15385a, #0d2a45);
+  }
+}
+.showcase img {
+  position: relative; border-radius: 14px;
+  box-shadow: 0 30px 70px -20px rgba(15, 43, 70, 0.55), 0 0 0 1px rgba(15, 43, 70, 0.08);
+}
+
+/* Sections */
+section { padding: 72px 0; border-top: 1px solid var(--rule); }
+h2 { margin: 0 0 12px; color: var(--glacier); font: 700 clamp(1.8rem, 3.6vw, 2.6rem)/1.1 var(--display);
+  letter-spacing: -0.015em; }
+h3 { margin: 0 0 4px; color: var(--glacier); font: 600 1.15rem/1.3 var(--display); }
+p { margin: 0 0 1em; }
+
+/* What it stops: a two-column definition list, not a card grid. */
+.stops { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 34px 56px; margin: 40px 0 0; }
+.stops div { padding-left: 18px; border-left: 3px solid var(--ice); }
+.stops dt { color: var(--glacier); font: 600 1.15rem/1.3 var(--display); margin-bottom: 4px; }
+.stops dd { margin: 0; }
+
+/* The trade-off: the honest part, set as a plain table. */
+.tradeoff table { width: 100%; max-width: 720px; border-collapse: collapse; margin: 28px 0 20px; font-size: 1rem; }
+.tradeoff th, .tradeoff td { text-align: left; padding: 12px 14px 12px 0; border-bottom: 1px solid var(--rule); }
+.tradeoff th { color: var(--glacier); font-weight: 600; }
+.tradeoff td:last-child { font-variant-numeric: tabular-nums; }
+
+.columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 28px 48px; margin-top: 32px; }
+.columns ul { margin: 0; padding-left: 1.1em; }
+.columns li { margin-bottom: 8px; }
+
+/* Ermine note */
+.ermine { display: grid; grid-template-columns: 96px 1fr; gap: 28px; align-items: center; }
+.ermine img { width: 96px; height: 96px; }
+@media (max-width: 560px) { .ermine { grid-template-columns: 1fr; } }
+
+/* Download band */
+.download { background: var(--glacier); color: #d6e8f5; border-top: 0; }
+.download h2 { color: var(--snow); }
+@media (prefers-color-scheme: dark) { .download { background: #071626; } .download h2 { color: #e6f3fb; } }
+.download .button { background: var(--ice); color: #0b1f33; }
+.download .button:hover { background: var(--aurora); color: #0b1f33; }
+.download a:not(.button) { color: var(--ice); }
+.download .quiet { color: #9fbdd3; }
+
+/* Footer */
+.site-footer { padding: 36px 0 56px; font-size: 0.95rem; color: var(--muted); }
+.site-footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; }
+.site-footer nav { display: flex; flex-wrap: wrap; gap: 22px; }
+.site-footer a { color: var(--muted); }
+
+/* Policy pages */
+.doc { padding: 40px 0 80px; }
+.doc h1 { color: var(--glacier); font: 700 clamp(2.2rem, 5vw, 3.4rem)/1.05 var(--display); margin: 0 0 8px; letter-spacing: -0.02em; }
+.doc h2 { font-size: 1.5rem; margin-top: 40px; }
+.doc .updated { color: var(--muted); margin-bottom: 32px; }
+
+@media (max-width: 640px) {
+  .site-nav { gap: 14px; font-size: 0.9rem; }
+  .hero { padding-top: 28px; }
+  section { padding: 56px 0; }
+  .showcase { margin-top: 44px; padding-bottom: 56px; }
+  .showcase::before { inset: 28px -16px 0 12%; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .showcase img { animation: settle 900ms cubic-bezier(.2, .7, .2, 1) both 150ms; }
+  @keyframes settle { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+}

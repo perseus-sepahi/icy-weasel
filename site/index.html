@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Icy Weasel — a private, ad-free browser for Mac</title>
+  <meta name="description" content="Icy Weasel is a Mac browser that blocks ads, trackers, pop-ups and fingerprinting before they load. Built on Apple's WebKit. No account, no telemetry.">
+  <link rel="icon" href="assets/favicon-64.png">
+  <link rel="apple-touch-icon" href="assets/icon-256.png">
+  <meta property="og:title" content="Icy Weasel — a private, ad-free browser for Mac">
+  <meta property="og:description" content="Blocks ads, trackers, pop-ups and fingerprinting before they load. No account, no telemetry.">
+  <meta property="og:image" content="assets/screenshot-newtab.jpg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,600..700&family=IBM+Plex+Sans:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="./"><img src="assets/icon-256.png" alt="" width="34" height="34">Icy Weasel</a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="#stops">What it blocks</a>
+        <a href="https://github.com/perseus-sepahi/icy-weasel">Source</a>
+        <a href="#download">Download</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="hero">
+      <div class="wrap">
+        <h1>The Mac browser that blocks ads before they load.</h1>
+        <p class="lede">Icy Weasel compiles nearly 250,000 filter rules straight into Apple's WebKit engine, hides you from fingerprinting, and refuses insecure connections by default. No account, no telemetry, nothing to sell.</p>
+        <div class="actions">
+          <a class="button" href="https://github.com/perseus-sepahi/icy-weasel/releases/latest/download/IcyWeasel.dmg">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 21h14"/></svg>
+            Download for Mac
+          </a>
+          <span class="quiet">Free. macOS 14 Sonoma or later. Mac App Store version coming soon.</span>
+        </div>
+      </div>
+      <div class="showcase">
+        <div class="wrap">
+          <img src="assets/screenshot-newtab.jpg" width="2000" height="1303"
+               alt="Icy Weasel's new tab page: frosted blue window chrome, a snowflake emblem, and counters for blocked items and compiled filter rules.">
+        </div>
+      </div>
+    </div>
+
+    <section id="stops">
+      <div class="wrap">
+        <h2>What it stops</h2>
+        <p class="measure">Everything here is on from the first launch. If a site breaks, turn any of it off for that site alone from the shield in the toolbar.</p>
+        <dl class="stops">
+          <div>
+            <dt>Ads and trackers</dt>
+            <dd>EasyList, EasyPrivacy, uBlock Origin's lists and more, turned into WebKit's native content rules. Blocked requests never leave your Mac.</dd>
+          </div>
+          <div>
+            <dt>YouTube video ads</dt>
+            <dd>The ad schedule is removed from the player before it plays, so ads are neither shown nor downloaded.</dd>
+          </div>
+          <div>
+            <dt>Pop-ups</dt>
+            <dd>Windows a page opens without your click are refused. The toolbar shows what was stopped if you want one back.</dd>
+          </div>
+          <div>
+            <dt>Fingerprinting</dt>
+            <dd>Canvas and audio readouts get a tiny per-site change, so trackers can't link your visits across sites.</dd>
+          </div>
+          <div>
+            <dt>Tracking links</dt>
+            <dd>Parameters like utm_source and fbclid are removed from links before the page loads.</dd>
+          </div>
+          <div>
+            <dt>Insecure connections</dt>
+            <dd>Every site is loaded over HTTPS. If a site can't do that, you get a clear warning page instead of a silent downgrade.</dd>
+          </div>
+        </dl>
+      </div>
+    </section>
+
+    <section class="tradeoff">
+      <div class="wrap">
+        <h2>The one trade-off, stated plainly</h2>
+        <p class="measure">Attackers most often break into browsers through the JavaScript speed compiler, the JIT. Icy Weasel switches it off by default. Reading sites feel the same; script-heavy apps run slower.</p>
+        <table>
+          <thead><tr><th scope="col">JavaScript mode</th><th scope="col">Protection</th><th scope="col">Same script, measured</th></tr></thead>
+          <tbody>
+            <tr><td>Full speed</td><td>Standard</td><td>45 ms</td></tr>
+            <tr><td>Hardened (default)</td><td>No JIT</td><td>147 ms</td></tr>
+            <tr><td>Lockdown</td><td>Apple's strictest</td><td>235 ms</td></tr>
+          </tbody>
+        </table>
+        <p class="measure">Give a heavy site you trust, like a spreadsheet or a map, full speed from its shield. Everything else stays hardened.</p>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2>Everything else a browser needs</h2>
+        <div class="columns">
+          <div>
+            <h3>Tabs that stay out of the way</h3>
+            <ul>
+              <li>Named, coloured tab groups</li>
+              <li>Idle tabs sleep to free memory</li>
+              <li>Your session comes back after a restart</li>
+              <li>Private windows that forget everything</li>
+            </ul>
+          </div>
+          <div>
+            <h3>An assistant that stays on your Mac</h3>
+            <p>Ask questions about the page you're reading using open-source AI models through Ollama. The page never leaves your computer.</p>
+          </div>
+          <div>
+            <h3>Your choice of search</h3>
+            <p>DuckDuckGo, Startpage, Brave, Kagi, Ecosia and six more, or your own. Address-bar suggestions come only from your own history and bookmarks.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2>What it doesn't do yet</h2>
+        <p class="measure">Icy Weasel runs on WebKit, the engine behind Safari, so Chrome extensions can't be installed. There's no built-in password manager or sync yet.</p>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap ermine">
+        <img src="assets/icon-256.png" alt="" width="96" height="96">
+        <p class="measure">Why a weasel? Each winter the stoat grows a white coat and becomes the ermine, nearly invisible against the snow. That's the whole idea.</p>
+      </div>
+    </section>
+
+    <section class="download" id="download">
+      <div class="wrap">
+        <h2>Get Icy Weasel</h2>
+        <p class="measure">Free and signed by its developer. Open the disk image and drag Icy Weasel into Applications.</p>
+        <div class="actions">
+          <a class="button" href="https://github.com/perseus-sepahi/icy-weasel/releases/latest/download/IcyWeasel.dmg">Download for Mac</a>
+          <a href="https://github.com/perseus-sepahi/icy-weasel/releases">All releases and checksums</a>
+        </div>
+        <p class="quiet" style="margin-top:20px">Requires macOS 14 Sonoma or later. Hardened JavaScript needs macOS 26.4 or later.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <span>© 2026 Mohammadreza Sepahi</span>
+      <nav aria-label="Footer">
+        <a href="privacy.html">Privacy policy</a>
+        <a href="support.html">Support</a>
+        <a href="https://github.com/perseus-sepahi/icy-weasel">Source code</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>
