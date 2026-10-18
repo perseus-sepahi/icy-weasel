@@ -1,6 +1,7 @@
 # Mac App Store listing — Icy Weasel 1.0
 
 Paste these into App Store Connect. Character limits are Apple's.
+The public text names no other company or product (trademark-safe for App Review).
 
 ## App information
 
@@ -20,17 +21,17 @@ Paste these into App Store Connect. Character limits are Apple's.
 
 ## Promotional text (170)
 
-Blocks ads, trackers, pop-ups and YouTube video ads before they load. Built on Apple's WebKit, with no account and no telemetry.
+Blocks ads, trackers, pop-ups and video ads before they load. No account, no telemetry, nothing to sell.
 
 ## Description (4,000)
 
 Icy Weasel is a web browser for Mac that stops ads and trackers before they load, hides you from fingerprinting, and refuses insecure connections by default.
 
 WHAT IT BLOCKS
-• Ads and trackers, using nearly 250,000 rules from EasyList, EasyPrivacy, uBlock Origin's lists and more, compiled into WebKit's native content blocker
-• YouTube video ads: the ad schedule is removed before the player reads it
+• Ads and trackers, using nearly 250,000 rules from popular open-source filter lists, compiled into the browser's native content blocker
+• Video ads, including the pre-roll ads many blockers miss
 • Pop-ups that a page opens without your click
-• Tracking parameters such as utm_source and fbclid in links
+• Tracking parameters in links
 • Third-party cookies
 • Canvas and audio fingerprinting, with a different result for every site
 • Plain HTTP: every site loads over HTTPS, with a clear warning if it can't
@@ -41,15 +42,15 @@ By default Icy Weasel runs pages without the JavaScript JIT compiler, the part o
 EVERYTHING ELSE
 • Tab groups, tab sleeping and session restore
 • Private windows that keep nothing
-• A page assistant that runs open-source AI models on your own Mac through Ollama
-• DuckDuckGo, Startpage, Brave, Kagi, Ecosia and six more search engines, or your own
+• A page assistant that runs open-source AI models locally, so pages never leave your Mac
+• Eleven search engines to choose from, or your own
 • Per-site controls for every protection
 • History and bookmarks with suggestions that never leave your Mac
 
 PRIVATE BY DESIGN
 No account, no analytics, no crash reporting, no advertising. History, bookmarks and settings stay on your Mac.
 
-Icy Weasel uses WebKit, the engine behind Safari, so Chrome extensions are not supported.
+Browser extensions are not supported.
 
 ## Keywords (100)
 
