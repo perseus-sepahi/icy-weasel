@@ -55,6 +55,7 @@ final class BrowserSettings {
         static let customLocalAIEndpoints = "customLocalAIEndpoints"
         static let cloudAIProviders = "cloudAIProviders"
         static let cloudAIConsent = "cloudAIConsent"
+        static let trustedLocalAI = "trustedLocalAI"
         static let appearance = "appearance"
     }
 
@@ -99,6 +100,11 @@ final class BrowserSettings {
             return (try? JSONDecoder().decode([CloudProviderConfig].self, from: data)) ?? []
         }
         set { withMutation(keyPath: \.cloudAIProviders) { defaults.set(try? JSONEncoder().encode(newValue), forKey: Keys.cloudAIProviders) } }
+    }
+    /// Unrecognised local servers the user picked, and so trusts with page text.
+    var trustedLocalAI: [String] {
+        get { access(keyPath: \.trustedLocalAI); return defaults.stringArray(forKey: Keys.trustedLocalAI) ?? [] }
+        set { withMutation(keyPath: \.trustedLocalAI) { defaults.set(newValue, forKey: Keys.trustedLocalAI) } }
     }
     /// Cloud providers the user agreed to send page text to.
     var cloudAIConsent: [String] {

@@ -23,6 +23,11 @@ struct AISource: Identifiable, Hashable, Sendable {
     /// Ollama: server root. OpenAI/Anthropic: API root including `/v1`.
     let baseURL: URL
     let isLocal: Bool
+    /// Known to be a model server: Ollama (identified by its own API), an
+    /// address the user added, or a cloud provider the user configured.
+    /// A server merely answering on a common port (8000, 8080…) could be any
+    /// program, so it is listed but never used until the user picks it.
+    var isVerified: Bool = true
 }
 
 struct AIModelChoice: Identifiable, Hashable, Sendable {
@@ -193,7 +198,8 @@ enum LocalAIDiscovery {
         var targets: [(AISource, Bool)] = candidates.map { c in
             let root = URL(string: "http://127.0.0.1:\(c.port)")!
             let base = c.kind == .ollama ? root : root.appendingPathComponent("v1")
-            return (AISource(id: "local:\(c.port)", name: c.name, kind: c.kind, baseURL: base, isLocal: true), false)
+            return (AISource(id: "local:\(c.port)", name: c.name, kind: c.kind, baseURL: base, isLocal: true,
+                             isVerified: c.kind == .ollama), false)
         }
         for raw in customEndpoints {
             guard var url = loopbackURL(raw) else { continue }
@@ -237,7 +243,8 @@ enum LocalAIDiscovery {
                     .filter(isChatModel)
                 // Name a generic llama.cpp/MLX server after the model it serves.
                 let renamed = source.isLocal && ids.contains { $0.lowercased().contains("bonsai") }
-                    ? AISource(id: source.id, name: "Bonsai", kind: source.kind, baseURL: source.baseURL, isLocal: true)
+                    ? AISource(id: source.id, name: "Bonsai", kind: source.kind, baseURL: source.baseURL, isLocal: true,
+                               isVerified: source.isVerified)
                     : source
                 return ids.map { AIModelChoice(source: renamed, model: $0) }
             }

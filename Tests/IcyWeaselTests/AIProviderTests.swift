@@ -89,6 +89,60 @@ final class AIProviderTests: XCTestCase {
         XCTAssertTrue(settings.cloudAIConsent.isEmpty, "declining remembers nothing")
     }
 
+    // MARK: Security review fixes
+
+    private func local(_ name: String, port: Int, verified: Bool, model: String) -> AIModelChoice {
+        AIModelChoice(source: AISource(id: "local:\(port)", name: name, kind: .openAI,
+                                       baseURL: URL(string: "http://127.0.0.1:\(port)/v1")!, isLocal: true, isVerified: verified),
+                      model: model)
+    }
+
+    func testNothingIsUsedThatTheUserDidNotPickOrWeCannotIdentify() {
+        let cloud = cloudChoice(.openAI, model: "gpt-x")
+        let unknown = local("Local server", port: 8000, verified: false, model: "whatever")
+        XCTAssertNil(PageAssistant.defaultChoice([cloud]), "a cloud model is never the automatic choice")
+        XCTAssertNil(PageAssistant.defaultChoice([unknown]), "nor is a program that merely answers on a common port")
+        let ollama = local("Ollama", port: 11434, verified: true, model: "qwen3:8b")
+        XCTAssertEqual(PageAssistant.defaultChoice([cloud, unknown, ollama])?.model, "qwen3:8b")
+    }
+
+    /// The refresh inside run() can change which model `selected` resolves to;
+    /// consent must be checked on the model that will actually get the page.
+    /// Here nothing is loaded when the question is asked (so ask() has nothing to
+    /// check), and the refresh in run() then resolves to a cloud model the user
+    /// picked earlier but never agreed to send pages to.
+    func testConsentIsCheckedOnTheModelThatActuallyReceivesThePage() async throws {
+        let settings = makeSettings()
+        let config = CloudProviderConfig(preset: .custom, customName: "Test Cloud",
+                                         customBaseURL: "https://models.invalid/v1", manualModel: "m1")
+        settings.cloudAIProviders = [config]
+        settings.assistantModel = "cloud:\(config.id)|m1"
+        let assistant = PageAssistant(settings: settings)
+        XCTAssertNil(assistant.selected, "nothing loaded yet")
+
+        assistant.ask("Summarize this page", webView: nil)
+        for _ in 0..<100 where assistant.consentRequest == nil && assistant.isGenerating {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertEqual(assistant.consentRequest?.question, "Summarize this page", "stopped and asked before sending")
+        XCTAssertEqual(assistant.consentRequest?.host, "models.invalid")
+        XCTAssertTrue(assistant.messages.isEmpty, "nothing was sent or shown as sent")
+        XCTAssertTrue(settings.cloudAIConsent.isEmpty)
+    }
+
+    func testPickingAnUnrecognisedServerTrustsItAndPrivateWindowsRespectThat() {
+        let settings = makeSettings()
+        let assistant = PageAssistant(settings: settings)
+        let generic = local("Local server", port: 8000, verified: false, model: "m")
+        assistant.choices = [generic]
+        XCTAssertNil(assistant.selected, "not used until picked")
+        XCTAssertFalse(assistant.isTrusted(generic.source))
+        assistant.select(generic)
+        XCTAssertEqual(assistant.selected?.id, generic.id)
+        XCTAssertTrue(assistant.isTrusted(generic.source), "picking it is the decision to trust it")
+        XCTAssertEqual(settings.trustedLocalAI, ["local:8000"])
+    }
+
     func testPrivateWindowsNeverOfferCloudModels() async {
         let settings = makeSettings()
         settings.cloudAIProviders = [CloudProviderConfig(preset: .custom, customName: "Test",

@@ -64,23 +64,40 @@ final class PageAssistant {
     var localChoices: [AIModelChoice] { choices.filter(\.source.isLocal) }
     var cloudChoices: [AIModelChoice] { choices.filter { !$0.source.isLocal } }
 
-    /// The model in use: the saved choice if it's still available, else the best local one.
+    /// The model in use: the one the user picked, if it's still available,
+    /// else the best *verified local* model. A cloud model or an unrecognised
+    /// local server is only ever used because the user chose it.
     var selected: AIModelChoice? {
         choices.first { $0.id == settings.assistantModel } ?? Self.defaultChoice(choices)
     }
 
-    func select(_ choice: AIModelChoice) { settings.assistantModel = choice.id }
+    /// Picking a model is the user's decision to use it. For an unrecognised
+    /// local server that also means trusting it with page text.
+    func select(_ choice: AIModelChoice) {
+        settings.assistantModel = choice.id
+        if case .unavailable = status, !choices.isEmpty { status = .ready }
+        if choice.source.isLocal, !choice.source.isVerified, !settings.trustedLocalAI.contains(choice.source.id) {
+            settings.trustedLocalAI.append(choice.source.id)
+        }
+    }
 
-    /// Most capable local chat model that leaves the browser room: the largest
-    /// under a third of this Mac's memory. Specialist models (OCR, translation)
-    /// are never the default. Cloud models are only a default when nothing runs locally.
+    /// Whether page text may go to this source without asking.
+    func isTrusted(_ source: AISource) -> Bool {
+        if source.isLocal { return source.isVerified || settings.trustedLocalAI.contains(source.id) }
+        return settings.cloudAIConsent.contains(source.id)
+    }
+
+    /// Most capable verified local chat model that leaves the browser room: the
+    /// largest under a third of this Mac's memory. Specialist models (OCR,
+    /// translation) are never the default. Never a cloud model, and never a
+    /// server that merely answers on a common port.
     static func defaultChoice(_ choices: [AIModelChoice]) -> AIModelChoice? {
-        let general = choices.filter { c in !["ocr", "translate"].contains { c.model.lowercased().contains($0) } }
-        let local = general.filter(\.source.isLocal)
+        let verifiedLocal = choices.filter { $0.source.isLocal && $0.source.isVerified }
+        let general = verifiedLocal.filter { c in !["ocr", "translate"].contains { c.model.lowercased().contains($0) } }
         let budget = Int64(ProcessInfo.processInfo.physicalMemory / 3)
-        if let sized = local.filter({ ($0.sizeBytes ?? 0) > 0 && ($0.sizeBytes ?? 0) <= budget })
+        if let sized = general.filter({ ($0.sizeBytes ?? 0) > 0 && ($0.sizeBytes ?? 0) <= budget })
             .max(by: { ($0.sizeBytes ?? 0) < ($1.sizeBytes ?? 0) }) { return sized }
-        return local.first ?? choices.first(where: \.source.isLocal) ?? general.first ?? choices.first
+        return general.first ?? verifiedLocal.first
     }
 
     // MARK: Discovery
@@ -102,12 +119,17 @@ final class PageAssistant {
                 found += models
             }
         }
+        // Private windows: only recognised servers, or ones the user already trusts.
+        if isPrivate { found = found.filter { $0.source.isLocal && isTrusted($0.source) } }
         choices = found
         let running = Set(found.compactMap { $0.source.isLocal ? $0.source.baseURL.port : nil })
         stoppedApps = LocalAIDiscovery.stoppedApps(running: running)
 
         if !found.isEmpty {
             status = .ready
+            if selected == nil {
+                status = .unavailable("Choose a model from the menu above. Servers found on common ports and cloud models are only used once you pick them.")
+            }
         } else if let app = stoppedApps.first {
             status = .unavailable("\(app.name) is installed but not running. Start it and the assistant will use its models.")
         } else {
@@ -178,10 +200,8 @@ final class PageAssistant {
         let text = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isGenerating else { return }
         // A cloud model needs the user's go-ahead before any page leaves the Mac.
-        if let choice = selected, !choice.source.isLocal, !settings.cloudAIConsent.contains(choice.source.id) {
-            consentRequest = ConsentRequest(question: text, providerID: choice.source.id,
-                                            providerName: choice.source.name, host: choice.source.baseURL.host ?? "")
-            pendingWebView = webView
+        if let choice = selected, !isTrusted(choice.source) {
+            requestConsent(for: choice, question: text, webView: webView)
             return
         }
         messages.append(Message(role: .user, text: text))
@@ -204,6 +224,12 @@ final class PageAssistant {
 
     func declineCloud() { consentRequest = nil; pendingWebView = nil }
 
+    private func requestConsent(for choice: AIModelChoice, question: String, webView: WKWebView?) {
+        consentRequest = ConsentRequest(question: question, providerID: choice.source.id,
+                                        providerName: choice.source.name, host: choice.source.baseURL.host ?? "")
+        pendingWebView = webView
+    }
+
     func stop() { task?.cancel(); isGenerating = false }
     func clear() { stop(); messages = []; contextNote = ""; consentRequest = nil }
 
@@ -211,6 +237,15 @@ final class PageAssistant {
         if status != .ready || choices.isEmpty { await refreshModels() }
         guard let choice = selected else {
             if case .unavailable(let why) = status { setReply(why) }
+            return
+        }
+        // Checked again here, on the model that will actually receive the page:
+        // the refresh above can change what `selected` resolves to.
+        guard isTrusted(choice.source) else {
+            if choice.source.isLocal { setReply("Choose this server from the menu to use it."); return }
+            let question = messages.dropLast().last { $0.role == .user }?.text ?? ""
+            messages.removeLast(min(2, messages.count))
+            requestConsent(for: choice, question: question, webView: webView)
             return
         }
         let page = await Self.extract(from: webView)
