@@ -7,6 +7,8 @@
 #   scripts/release.sh appstore    Mac App Store package (.pkg) for Transporter,
 #                                  or uploaded directly when an App Store Connect
 #                                  API key is configured (see below).
+#   scripts/release.sh upload      Archive and upload to App Store Connect using
+#                                  the Apple account signed in to Xcode.
 #
 # One-time setup, done by you (the script never handles passwords):
 #   Notarization:  xcrun notarytool store-credentials icyweasel-notary \
@@ -96,8 +98,15 @@ appstore() {
   fi
 }
 
+upload() {
+  archive
+  xcodebuild -exportArchive -archivePath "$ARCHIVE" -exportOptionsPlist scripts/ExportOptions-AppStoreUpload.plist \
+    -exportPath "$OUT/appstore-upload" -allowProvisioningUpdates 2>&1 | grep -vE "Progress [0-9]+%|^\s*$|IDEDistribution"
+}
+
 case "${1:-}" in
   direct)   direct ;;
   appstore) appstore ;;
-  *) echo "usage: scripts/release.sh direct|appstore"; exit 2 ;;
+  upload)   upload ;;
+  *) echo "usage: scripts/release.sh direct|appstore|upload"; exit 2 ;;
 esac

@@ -31,10 +31,6 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.icyweasel.browser
         PRODUCT_NAME: Icy Weasel
-        INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026 Mohammadreza Sepahi"
-        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
-        INFOPLIST_KEY_NSSupportsAutomaticTermination: YES
-        INFOPLIST_KEY_NSSupportsSuddenTermination: NO
         CODE_SIGN_ENTITLEMENTS: Resources/IcyWeasel.entitlements
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_STYLE: Automatic
@@ -43,6 +39,13 @@ targets:
     info:
       path: Resources/Info.plist
       properties:
+        # Written here, not as INFOPLIST_KEY_* build settings: with a custom
+        # Info.plist those settings are silently ignored (App Store upload
+        # rejected the missing category).
+        LSApplicationCategoryType: public.app-category.productivity
+        NSHumanReadableCopyright: "© 2026 Mohammadreza Sepahi"
+        NSSupportsAutomaticTermination: true
+        NSSupportsSuddenTermination: false
         CFBundleName: Icy Weasel
         CFBundleDisplayName: Icy Weasel
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
