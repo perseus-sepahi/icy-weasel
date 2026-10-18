@@ -85,7 +85,7 @@ final class BrowserViewModel {
         let privateWindow = isPrivate || settings.ephemeralByDefault
         // Private windows get a throwaway in-memory library: nothing is recorded.
         self.library = privateWindow ? BrowsingLibrary(directory: nil) : (library ?? BrowsingLibrary(directory: nil))
-        self.assistant = PageAssistant(settings: settings)
+        self.assistant = PageAssistant(settings: settings, isPrivate: privateWindow)
         self.restoresSession = restoreSession && !privateWindow
         // Same for per-site settings: a private window starts from the saved
         // ones but never writes the sites it visits to disk.

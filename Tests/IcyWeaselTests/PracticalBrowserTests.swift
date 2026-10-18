@@ -219,7 +219,7 @@ final class PracticalBrowserTests: XCTestCase {
         assistant.ask("When does the last ferry to Quillhaven leave, and from which pier?", webView: webView)
         while assistant.isGenerating, Date().timeIntervalSince(start) < 180 { try await Task.sleep(for: .milliseconds(200)) }
         let answer = assistant.messages.last?.text ?? ""
-        print("\n=== LOCAL MODEL (\(assistant.selectedModel), \(String(format: "%.1f", Date().timeIntervalSince(start)))s) ===\n\(answer)\n\(assistant.contextNote)\n")
+        print("\n=== LOCAL MODEL (\(assistant.selected?.model ?? "none"), \(String(format: "%.1f", Date().timeIntervalSince(start)))s) ===\n\(answer)\n\(assistant.contextNote)\n")
         XCTAssertTrue(answer.contains("21:47"), "answer should come from the page: \(answer)")
         XCTAssertTrue(answer.contains("9"))
         XCTAssertFalse(answer.uppercased().trimmingCharacters(in: .punctuationCharacters) == "BANANA", "page text hijacked the model")

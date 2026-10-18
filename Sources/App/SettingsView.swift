@@ -10,6 +10,8 @@ struct SettingsView: View {
                 .tabItem { Label("Filter Lists", systemImage: "list.bullet.rectangle") }
             GeneralSettings()
                 .tabItem { Label("General", systemImage: "gearshape") }
+            AISettingsView()
+                .tabItem { Label("AI", systemImage: "sparkles") }
             PrivacyDataSettings()
                 .tabItem { Label("Data", systemImage: "externaldrive.badge.xmark") }
         }
@@ -156,19 +158,6 @@ private struct GeneralSettings: View {
                 Text("Search")
             } footer: {
                 Text("Address-bar suggestions come only from your own history and bookmarks. Keystrokes are never sent to a search engine.")
-            }
-
-            Section {
-                TextField("Model server", text: $settings.assistantEndpoint)
-                    .font(.system(size: 12, design: .monospaced))
-                if PageAssistant.localEndpoint(settings.assistantEndpoint) == nil {
-                    Text("Only addresses on this Mac (localhost) are accepted, so page content can never be sent elsewhere.")
-                        .font(.caption).foregroundStyle(Theme.warning)
-                }
-            } header: {
-                Text("AI assistant")
-            } footer: {
-                Text("Uses open-source models running locally through Ollama (ollama.com). Get a model with: ollama pull qwen3:8b")
             }
 
             Section("Look") {

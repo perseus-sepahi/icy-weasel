@@ -27,7 +27,6 @@ final class BrowserSettings {
             Keys.javaScriptHardening: JavaScriptHardening.hardened.rawValue,
             Keys.globalPrivacyControl: true,
             Keys.restoreSession: true,
-            Keys.assistantEndpoint: "http://localhost:11434",
             Keys.enabledFilterLists: FilterListCatalog.all.filter(\.defaultEnabled).map(\.id)
         ])
     }
@@ -52,8 +51,10 @@ final class BrowserSettings {
         static let globalPrivacyControl = "globalPrivacyControl"
         static let restoreSession = "restoreSession"
         static let customSearchTemplate = "customSearchTemplate"
-        static let assistantEndpoint = "assistantEndpoint"
         static let assistantModel = "assistantModel"
+        static let customLocalAIEndpoints = "customLocalAIEndpoints"
+        static let cloudAIProviders = "cloudAIProviders"
+        static let cloudAIConsent = "cloudAIConsent"
         static let appearance = "appearance"
     }
 
@@ -80,13 +81,29 @@ final class BrowserSettings {
         get { access(keyPath: \.customSearchTemplate); return defaults.string(forKey: Keys.customSearchTemplate) ?? "" }
         set { withMutation(keyPath: \.customSearchTemplate) { defaults.set(newValue, forKey: Keys.customSearchTemplate) } }
     }
-    var assistantEndpoint: String {
-        get { access(keyPath: \.assistantEndpoint); return defaults.string(forKey: Keys.assistantEndpoint) ?? "http://localhost:11434" }
-        set { withMutation(keyPath: \.assistantEndpoint) { defaults.set(newValue, forKey: Keys.assistantEndpoint) } }
-    }
+    /// The chosen model as "sourceID|model", e.g. "local:11434|qwen3:8b".
     var assistantModel: String {
         get { access(keyPath: \.assistantModel); return defaults.string(forKey: Keys.assistantModel) ?? "" }
         set { withMutation(keyPath: \.assistantModel) { defaults.set(newValue, forKey: Keys.assistantModel) } }
+    }
+    /// Extra model servers on this Mac (loopback only), for tools on other ports.
+    var customLocalAIEndpoints: [String] {
+        get { access(keyPath: \.customLocalAIEndpoints); return defaults.stringArray(forKey: Keys.customLocalAIEndpoints) ?? [] }
+        set { withMutation(keyPath: \.customLocalAIEndpoints) { defaults.set(newValue, forKey: Keys.customLocalAIEndpoints) } }
+    }
+    /// Cloud providers the user added. Their API keys are in the keychain.
+    var cloudAIProviders: [CloudProviderConfig] {
+        get {
+            access(keyPath: \.cloudAIProviders)
+            guard let data = defaults.data(forKey: Keys.cloudAIProviders) else { return [] }
+            return (try? JSONDecoder().decode([CloudProviderConfig].self, from: data)) ?? []
+        }
+        set { withMutation(keyPath: \.cloudAIProviders) { defaults.set(try? JSONEncoder().encode(newValue), forKey: Keys.cloudAIProviders) } }
+    }
+    /// Cloud providers the user agreed to send page text to.
+    var cloudAIConsent: [String] {
+        get { access(keyPath: \.cloudAIConsent); return defaults.stringArray(forKey: Keys.cloudAIConsent) ?? [] }
+        set { withMutation(keyPath: \.cloudAIConsent) { defaults.set(newValue, forKey: Keys.cloudAIConsent) } }
     }
 
     var javaScriptHardening: JavaScriptHardening {

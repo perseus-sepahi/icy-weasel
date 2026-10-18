@@ -146,14 +146,28 @@ Saved to ~/Downloads with the quarantine attribute (Gatekeeper checks before fir
 open), server-supplied names reduced to a last path component (no `../` escapes),
 never overwrite, never auto-open.
 
-### Local AI assistant
+### AI assistant
 The sparkle button at the top right opens a panel that answers questions about the
-current page using an open-source model running **on this Mac** through Ollama
-(`ollama pull qwen3:8b`). The endpoint must be localhost — anything else is refused, so
-page text can never be sent to a remote server. Page content is handed to the model as
-untrusted data, and the model has no tools, so a hostile page can at worst make an
-answer wrong (`PracticalBrowserTests` plants an injection in the page and checks the
-model still answers from the facts).
+current page. Models come from two places (`Sources/Assistant/AIProviders.swift`):
+
+- **On this Mac, found automatically.** The panel asks the ports local AI tools use:
+  Ollama (11434), llama.cpp (8080, what Bonsai's `start_llama_server.sh` runs), MLX
+  (8081, Bonsai's `start_mlx_server.sh`), LM Studio (1234), Jan (1337), GPT4All (4891)
+  and 8000, plus any loopback address added in Settings > AI. Whatever answers is listed
+  with its models, so new tools and models appear without an app update. An installed
+  but stopped Ollama gets a Start button.
+- **Cloud, optional, with your own API key.** OpenAI, Anthropic, Google Gemini,
+  OpenRouter, Groq, Mistral, DeepSeek or any OpenAI-compatible HTTPS endpoint. Keys live
+  in the keychain and are only ever sent to their own provider over HTTPS. Page text goes
+  to a cloud provider only after the user agrees once per provider, the panel always
+  says where pages go, and private windows offer local models only.
+
+Page content is handed to the model as untrusted data, and the model has no tools, so a
+hostile page can at worst make an answer wrong (`PracticalBrowserTests` plants an
+injection in the page and checks the model still answers from the facts).
+`AIProviderTests` cover discovery, streaming, consent and key handling; its
+Bonsai-style end-to-end test runs against `scripts/fake-ai-server.py`, because the app
+sandbox can't host a server itself.
 
 ### Pop-ups
 WebKit refuses `window.open` without a user gesture; Icy Weasel also blocks the
@@ -269,7 +283,7 @@ is WebKit's per-request rule matching, paid on every resource a page loads.
   (⌘D) with local-only address-bar suggestions, 11 search engines plus a custom one,
   private windows, downloads, uploads, JavaScript dialogs, HTTP sign-in prompts, print
   (⌘P), ⌘-click to open in a background tab, links from other apps, fullscreen video,
-  find in page (⌘F), zoom, per-site shield panel (⌥⌘P), and the local AI assistant (⌥⌘A).
+  find in page (⌘F), zoom, per-site shield panel (⌥⌘P), and the AI assistant (⌥⌘A).
 
 ---
 

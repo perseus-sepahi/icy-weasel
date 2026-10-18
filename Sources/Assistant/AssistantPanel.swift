@@ -11,8 +11,13 @@ struct AssistantPanel: View {
         let assistant = model.assistant
         VStack(spacing: 0) {
             header(assistant)
+            if let choice = assistant.selected, !choice.source.isLocal {
+                cloudBanner(choice)
+            }
             Divider().opacity(0.4)
-            if case .unavailable(let reason) = assistant.status, assistant.messages.isEmpty {
+            if let request = assistant.consentRequest {
+                consent(request, assistant)
+            } else if case .unavailable(let reason) = assistant.status, assistant.messages.isEmpty {
                 unavailable(reason, assistant)
             } else {
                 conversation(assistant)
@@ -30,17 +35,15 @@ struct AssistantPanel: View {
         .onAppear { focused = true }
     }
 
+    // MARK: Header and model menu
+
     private func header(_ assistant: PageAssistant) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "sparkles").foregroundStyle(Theme.iceGradient).iceGlow(Theme.ice, radius: 5)
             Text("Ask about this page").font(.system(size: 13, weight: .semibold))
-            Spacer()
-            if !assistant.models.isEmpty {
-                Picker("Model", selection: Binding(get: { assistant.selectedModel }, set: { assistant.selectedModel = $0 })) {
-                    ForEach(assistant.models, id: \.self) { Text($0).tag($0) }
-                }
-                .labelsHidden().controlSize(.small).frame(maxWidth: 130)
-            }
+                .lineLimit(1).fixedSize()
+            Spacer(minLength: 4)
+            modelMenu(assistant)
             Button { assistant.clear() } label: { Image(systemName: "trash") }
                 .buttonStyle(.plain).foregroundStyle(.secondary).help("Clear conversation")
             Button { model.showAssistant = false } label: { Image(systemName: "xmark") }
@@ -49,13 +52,86 @@ struct AssistantPanel: View {
         .padding(.horizontal, 12).frame(height: 40)
     }
 
+    private func modelMenu(_ assistant: PageAssistant) -> some View {
+        Menu {
+            if !assistant.localChoices.isEmpty {
+                Section("On this Mac") {
+                    ForEach(assistant.localChoices) { choice in item(choice, assistant) }
+                }
+            }
+            if !assistant.cloudChoices.isEmpty {
+                Section("Cloud, with your API key") {
+                    ForEach(assistant.cloudChoices) { choice in item(choice, assistant) }
+                }
+            }
+            Divider()
+            Button("Look for Models Again") { Task { await assistant.refreshModels() } }
+            SettingsLink { Text("AI Settings…") }
+        } label: {
+            Text(assistant.selected.map { $0.model } ?? (assistant.status == .checking ? "Looking…" : "No model"))
+                .font(.system(size: 11)).lineLimit(1).truncationMode(.middle)
+        }
+        .menuStyle(.borderlessButton).frame(maxWidth: 120)
+        .help("Choose the AI model")
+    }
+
+    private func item(_ choice: AIModelChoice, _ assistant: PageAssistant) -> some View {
+        Button {
+            assistant.select(choice)
+        } label: {
+            if choice.id == assistant.selected?.id {
+                Label("\(choice.model)  (\(choice.source.name))", systemImage: "checkmark")
+            } else {
+                Text("\(choice.model)  (\(choice.source.name))")
+            }
+        }
+    }
+
+    /// Always visible while a cloud model is selected: the page leaves the Mac.
+    private func cloudBanner(_ choice: AIModelChoice) -> some View {
+        Label("Sends the page to \(choice.source.baseURL.host ?? choice.source.name)", systemImage: "icloud.and.arrow.up")
+            .font(.system(size: 11)).foregroundStyle(Theme.warning)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12).padding(.bottom, 6)
+    }
+
+    // MARK: States
+
+    private func consent(_ request: PageAssistant.ConsentRequest, _ assistant: PageAssistant) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Spacer()
+            Image(systemName: "icloud.and.arrow.up").font(.system(size: 26, weight: .light)).foregroundStyle(Theme.warning)
+            Text("Send this page to \(request.providerName)?").font(.system(size: 14, weight: .semibold))
+            Text("""
+                The text of the page you're reading and your questions go to \(request.host) using your API key, \
+                and that provider's privacy policy applies. Local models keep everything on this Mac.
+                """)
+                .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button("Don't Send") { assistant.declineCloud() }
+                Button("Send to \(request.providerName)") { assistant.allowCloud() }.keyboardShortcut(.defaultAction)
+            }
+            .controlSize(.regular)
+            Text("You'll only be asked once for \(request.providerName).").font(.system(size: 10)).foregroundStyle(.tertiary)
+            Spacer()
+        }
+        .padding(20).frame(maxHeight: .infinity)
+    }
+
     private func unavailable(_ reason: String, _ assistant: PageAssistant) -> some View {
         VStack(spacing: 12) {
             Spacer()
             Image(systemName: "cpu").font(.system(size: 30, weight: .light)).foregroundStyle(.secondary)
             Text(reason).font(.system(size: 12)).foregroundStyle(.secondary)
                 .multilineTextAlignment(.center).textSelection(.enabled)
-            Button("Check Again") { Task { await assistant.refreshModels() } }.controlSize(.small)
+            ForEach(assistant.stoppedApps, id: \.self) { app in
+                Button("Start \(app.name)") { assistant.start(app) }.controlSize(.regular)
+            }
+            HStack {
+                Button("Check Again") { Task { await assistant.refreshModels() } }
+                SettingsLink { Text("AI Settings…") }
+            }
+            .controlSize(.small)
             Spacer()
         }
         .padding(20).frame(maxHeight: .infinity)
@@ -65,7 +141,7 @@ struct AssistantPanel: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
-                    if assistant.messages.isEmpty { intro }
+                    if assistant.messages.isEmpty { intro(assistant) }
                     ForEach(assistant.messages) { message in bubble(message, assistant) }
                     Color.clear.frame(height: 1).id("end")
                 }
@@ -76,10 +152,15 @@ struct AssistantPanel: View {
         .frame(maxHeight: .infinity)
     }
 
-    private var intro: some View {
+    private func intro(_ assistant: PageAssistant) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("Runs on this Mac. The page never leaves it.", systemImage: "lock.shield")
-                .font(.system(size: 11)).foregroundStyle(.secondary)
+            if let choice = assistant.selected, !choice.source.isLocal {
+                Label("Uses \(choice.source.name) with your API key.", systemImage: "key")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            } else {
+                Label("Runs on this Mac. The page never leaves it.", systemImage: "lock.shield")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            }
             ForEach(["Summarize this page", "What are the key points?", "Explain the selected text simply",
                      "What claims here should I be skeptical of?"], id: \.self) { prompt in
                 Button { send(prompt) } label: {
