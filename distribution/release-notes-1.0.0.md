@@ -8,8 +8,12 @@ The first release of Icy Weasel, a private, ad-free browser for Mac built on App
 - Defends against canvas and audio fingerprinting
 - Loads every site over HTTPS, with a warning page when a site can't
 - Runs JavaScript without the JIT compiler by default; give trusted heavy sites full speed from the shield
+- Saves passwords in your Mac's keychain and fills them when you click the key in the address bar; imports passwords exported from other browsers
 - Tab groups, tab sleeping, session restore, private windows
-- A page assistant that runs open-source models locally through Ollama
+- A page assistant that finds the AI models running on your Mac (Ollama, Bonsai, LM Studio, llama.cpp and others), with optional cloud models using your own API key; it asks before a page is sent anywhere
+
+**Build 5 (Oct 22, 2026)**
+- The key button now comes back when you go Back or Forward to a sign-in page
 
 No account, no telemetry. Privacy policy: https://perseus-sepahi.github.io/icy-weasel/privacy.html
 
