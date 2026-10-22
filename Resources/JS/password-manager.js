@@ -85,4 +85,12 @@
   });
   observer.observe(document.documentElement, { childList: true, subtree: true });
   scan();
+
+  // Back/Forward can restore this page from WebKit's cache without running this
+  // script again, while the browser forgot the form when the restore committed.
+  window.addEventListener("pageshow", (e) => {
+    if (!e.persisted) return;
+    lastSent = "";
+    if (passwordFields().length > 0) post({ type: "formFound" });
+  });
 })();

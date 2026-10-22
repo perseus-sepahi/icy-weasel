@@ -7,6 +7,8 @@ Used by AIProviderTests, which can't host a server inside the app sandbox:
     TEST_RUNNER_IW_FAKE_AI_PORT=18431 xcodebuild ... -only-testing:IcyWeaselTests/AIProviderTests
 Requests are kept in memory; GET /debug/requests returns them so the sandboxed
 test can check what was sent.
+GET /login and /done are two plain pages for PasswordTests, which needs real
+history entries that WebKit can restore from its back/forward cache.
 """
 import json, sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -14,6 +16,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 MODEL = "Ternary-Bonsai-2-27B-PQ2_0.gguf"
 REPLY = ["The last ferry ", "leaves at 21:47."]
 REQUESTS = []
+PAGES = {
+    "/login": '<form><input type="email" id="u" autocomplete="username"><input type="password" id="p">'
+              '<button type="submit">Sign in</button></form>',
+    "/done": "<p>Signed in</p>",
+}
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args): pass
@@ -26,6 +33,10 @@ class Handler(BaseHTTPRequestHandler):
             data = json.dumps(REQUESTS).encode()
             self.send_response(200); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
             REQUESTS.clear()
+        elif self.path in PAGES:
+            data = ("<!doctype html><html><body>" + PAGES[self.path] + "</body></html>").encode()
+            self.send_response(200); self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
         elif self.path.rstrip("/") == "/v1/models":
             self.record("")
             data = json.dumps({"object": "list", "data": [{"id": MODEL, "object": "model"}]}).encode()

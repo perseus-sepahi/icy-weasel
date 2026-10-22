@@ -124,6 +124,33 @@ final class PasswordTests: XCTestCase {
         XCTAssertFalse(filled, "the password is not sent to a frame that left the site")
     }
 
+    /// Back restores the sign-in page from WebKit's cache without rerunning the
+    /// page script; the key button must still come back. Pages loaded from a
+    /// string never enter that cache, so this needs real pages from
+    /// `python3 scripts/fake-ai-server.py 18431 &` and TEST_RUNNER_IW_FAKE_AI_PORT=18431.
+    func testKeyButtonReturnsWhenGoingBackToACachedSignInPage() async throws {
+        let port = ProcessInfo.processInfo.environment["IW_FAKE_AI_PORT"].flatMap(Int.init) ?? 0
+        try XCTSkipIf(port == 0, "start scripts/fake-ai-server.py and set TEST_RUNNER_IW_FAKE_AI_PORT")
+        PasswordStore.save(host: "127.0.0.1", username: "ana", password: "s3cret!")
+        let (_, tab, webView) = makeTab()
+        func open(_ path: String) async throws {
+            webView.load(URLRequest(url: URL(string: "http://127.0.0.1:\(port)\(path)")!))
+            for _ in 0..<50 where webView.url?.path != path || webView.isLoading { try await Task.sleep(for: .milliseconds(100)) }
+            try await Task.sleep(for: .milliseconds(600))
+        }
+        try await open("/login")
+        XCTAssertFalse(tab.availableLogins.isEmpty)
+        _ = try await webView.evaluateJavaScript("document.getElementById('u').value = 'typed'; true")
+
+        try await open("/done")
+        webView.goBack()   // a cache restore may never report isLoading, so watch the URL
+        for _ in 0..<50 where webView.url?.path != "/login" { try await Task.sleep(for: .milliseconds(100)) }
+        try await Task.sleep(for: .milliseconds(600))
+        let fromCache = try await webView.evaluateJavaScript("document.getElementById('u').value") as? String
+        XCTAssertEqual(fromCache, "typed", "the page came back from the back/forward cache")
+        XCTAssertFalse(tab.availableLogins.isEmpty, "the cached sign-in page gets its key button back")
+    }
+
     func testPlainHTTPPagesNeverGetPasswords() async throws {
         PasswordStore.save(host: "plain.icyweasel.test", username: "ana", password: "x")
         let (_, tab, webView) = makeTab()
