@@ -40,6 +40,8 @@ struct AIModelChoice: Identifiable, Hashable, Sendable {
     let source: AISource
     let model: String
     var sizeBytes: Int64?
+    /// Costs nothing to use (OpenRouter's ":free" models), within the provider's rate limits.
+    var isFree = false
     var id: String { "\(source.id)|\(model)" }
 
     /// llama.cpp reports a model by its file path; show just the model's name.
@@ -173,6 +175,67 @@ enum AIKeychain {
     }
 }
 
+/// What a provider says about a key. OpenRouter lists its models to anyone, so
+/// a model list proves nothing about the key; it has endpoints that do.
+enum CloudKeyCheck: Equatable, Sendable {
+    /// Works; the detail describes the free allowance, if the provider says.
+    case usable(String?)
+    /// An OpenRouter management key: it creates and manages keys, but can't run models.
+    case managementKey
+    case rejected
+    /// The provider couldn't be reached; nothing is known.
+    case unknown
+
+    static let openRouterKeysPage = "openrouter.ai/settings/keys"
+
+    static func isOpenRouter(_ source: AISource) -> Bool { source.baseURL.host == "openrouter.ai" }
+
+    /// `get` fetches a path under the API with the key; tests pass their own.
+    static func openRouter(_ source: AISource, apiKey: String,
+                           get: ((String) async -> (status: Int, body: Data)?)? = nil) async -> CloudKeyCheck {
+        let get = get ?? { path in
+            var request = URLRequest(url: source.baseURL.appendingPathComponent(path))
+            request.timeoutInterval = 10
+            AIClient.authorize(&request, source: source, apiKey: apiKey)
+            guard let (data, response) = try? await AIClient.session.data(for: request) else { return nil }
+            return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
+        }
+        // Only a management key may list the account's keys.
+        if let keys = await get("keys"), keys.status == 200 { return .managementKey }
+        guard let key = await get("key") else { return .unknown }
+        guard key.status == 200 else { return [401, 403].contains(key.status) ? .rejected : .unknown }
+
+        struct Info: Decodable {
+            struct Daily: Decodable { let limit: Int?; let remaining: Int? }
+            struct Details: Decodable { let is_free_tier: Bool?; let free_model_daily_requests: Daily? }
+            let data: Details
+        }
+        let info = try? JSONDecoder().decode(Info.self, from: key.body).data
+        if let daily = info?.free_model_daily_requests, let limit = daily.limit, let remaining = daily.remaining {
+            return .usable("Free models: \(remaining) of \(limit) requests left today")
+        }
+        return .usable(info?.is_free_tier == true ? "No credits bought yet: free models only, up to 50 requests a day" : nil)
+    }
+
+    /// Shown in Settings and when adding a provider.
+    var message: String {
+        switch self {
+        case .usable(let detail): return detail.map { "API key saved in your keychain. \($0)." } ?? "API key saved in your keychain"
+        case .managementKey:
+            return "This is a management key, which can only manage other keys and can't run models. Remove it and add a regular API key from \(Self.openRouterKeysPage)."
+        case .rejected: return "OpenRouter didn't accept this key. Check it, or create a new one at \(Self.openRouterKeysPage)."
+        case .unknown: return "API key saved in your keychain (OpenRouter couldn't be reached to check it)"
+        }
+    }
+
+    var canRunModels: Bool {
+        switch self {
+        case .usable, .unknown: return true
+        case .managementKey, .rejected: return false
+        }
+    }
+}
+
 // MARK: - Local discovery
 
 /// Finds model servers running on this Mac by asking the ports local AI tools
@@ -286,20 +349,57 @@ enum LocalAIDiscovery {
                 let session = source.isLocal ? probeSession : AIClient.session
                 let (data, response) = try await session.data(for: request)
                 guard (response as? HTTPURLResponse)?.statusCode == 200 else { return [] }
-                struct List: Decodable { struct Model: Decodable { let id: String }; let data: [Model] }
-                let ids = try JSONDecoder().decode(List.self, from: data).data.map(\.id)
-                    .map { $0.hasPrefix("models/") ? String($0.dropFirst(7)) : $0 }   // Gemini
-                    .filter(isChatModel)
+                let listed = try modelList(data)
                 // Name a generic llama.cpp/MLX server after the model it serves.
-                let renamed = source.isLocal && ids.contains { $0.lowercased().contains("bonsai") }
+                let renamed = source.isLocal && listed.contains { $0.id.lowercased().contains("bonsai") }
                     ? AISource(id: source.id, name: "Bonsai", kind: source.kind, baseURL: source.baseURL, isLocal: true,
                                isVerified: source.isVerified, remoteHost: nil)
                     : source
-                return ids.map { AIModelChoice(source: renamed, model: $0) }
+                return listed.map { AIModelChoice(source: renamed, model: $0.id, isFree: !source.isLocal && $0.isFree) }
             }
         } catch {
             return []
         }
+    }
+
+    /// An OpenAI-style model list. OpenRouter adds per-token prices; a model is
+    /// free when it says so (":free") or both prices are zero.
+    static func modelList(_ data: Data) throws -> [(id: String, isFree: Bool)] {
+        struct List: Decodable {
+            struct Model: Decodable {
+                /// A price as OpenRouter writes it ("0.000002"), or as a number.
+                struct Price: Decodable {
+                    let value: Double?
+                    init(from decoder: Decoder) throws {
+                        let c = try decoder.singleValueContainer()
+                        value = (try? c.decode(Double.self)) ?? (try? c.decode(String.self)).flatMap(Double.init)
+                    }
+                }
+                struct Pricing: Decodable { let prompt: Price?; let completion: Price? }
+                struct Architecture: Decodable { let output_modalities: [String]? }
+                let id: String
+                let pricing: Pricing?
+                let architecture: Architecture?
+
+                // Only the id is required: an unusual extra field never hides the whole list.
+                enum CodingKeys: String, CodingKey { case id, pricing, architecture }
+                init(from decoder: Decoder) throws {
+                    let c = try decoder.container(keyedBy: CodingKeys.self)
+                    id = try c.decode(String.self, forKey: .id)
+                    pricing = try? c.decode(Pricing.self, forKey: .pricing)
+                    architecture = try? c.decode(Architecture.self, forKey: .architecture)
+                }
+            }
+            let data: [Model]
+        }
+        return try JSONDecoder().decode(List.self, from: data).data
+            .filter { $0.architecture?.output_modalities?.contains("text") ?? true }   // not image-only models
+            .map { m in
+                let id = m.id.hasPrefix("models/") ? String(m.id.dropFirst(7)) : m.id   // Gemini
+                let free = m.pricing?.prompt?.value == 0 && m.pricing?.completion?.value == 0
+                return (id, id.hasSuffix(":free") || free)
+            }
+            .filter { isChatModel($0.id) }
     }
 
     static func isOllamaCloudModel(_ name: String) -> Bool {
@@ -329,6 +429,33 @@ enum AIClient {
             case .model(let message): return message
             }
         }
+    }
+
+    /// Says what a refused request means for the user, then what the provider said.
+    static func explanation(_ error: Error, choice: AIModelChoice) -> String {
+        let name = choice.source.name
+        guard case .http(let code, let message) = error as? Failure else {
+            return "\(name) couldn't answer: \(error.localizedDescription)"
+        }
+        let openRouter = CloudKeyCheck.isOpenRouter(choice.source)
+        let advice: String
+        switch code {
+        case 401, 403:
+            advice = openRouter
+                ? "OpenRouter didn't accept the API key. Use a regular API key from \(CloudKeyCheck.openRouterKeysPage); management keys can't run models."
+                : "\(name) didn't accept the API key. Check it in Settings > AI."
+        case 402:
+            advice = openRouter
+                ? "This model needs OpenRouter credits. Models in the menu's Free list work without credits."
+                : "\(name) says the account needs credits for this model."
+        case 429:
+            advice = openRouter && choice.isFree
+                ? "OpenRouter limits free models to 20 requests a minute, and 50 a day until you buy credits. Try again later or pick another model."
+                : "\(name) is limiting requests right now. Try again in a moment."
+        default:
+            return "\(name) couldn't answer: \(error.localizedDescription)"
+        }
+        return message.isEmpty ? advice : "\(advice)\n\n\(name) said: \(message)"
     }
 
     static let session: URLSession = {

@@ -61,7 +61,19 @@ struct AssistantPanel: View {
             }
             if !assistant.cloudChoices.isEmpty {
                 Section("Cloud, with your API key") {
-                    ForEach(assistant.cloudChoices) { choice in item(choice, assistant) }
+                    // One submenu per provider: OpenRouter alone lists hundreds of models.
+                    ForEach(Dictionary(grouping: assistant.cloudChoices, by: \.source.name).sorted { $0.key < $1.key },
+                            id: \.key) { name, models in
+                        Menu(name) {
+                            let free = models.filter(\.isFree), paid = models.filter { !$0.isFree }
+                            if !free.isEmpty {
+                                Section("Free") { ForEach(free) { item($0, assistant, showSource: false) } }
+                            }
+                            if !paid.isEmpty {
+                                Section(free.isEmpty ? "" : "Paid") { ForEach(paid) { item($0, assistant, showSource: false) } }
+                            }
+                        }
+                    }
                 }
             }
             if !assistant.stoppedApps.isEmpty || !assistant.stoppedLaunchers.isEmpty {
@@ -81,14 +93,15 @@ struct AssistantPanel: View {
         .help("Choose the AI model")
     }
 
-    private func item(_ choice: AIModelChoice, _ assistant: PageAssistant) -> some View {
-        Button {
+    private func item(_ choice: AIModelChoice, _ assistant: PageAssistant, showSource: Bool = true) -> some View {
+        let title = showSource ? "\(choice.displayName)  (\(choice.source.name))" : choice.displayName
+        return Button {
             assistant.select(choice)
         } label: {
             if choice.id == assistant.selected?.id {
-                Label("\(choice.displayName)  (\(choice.source.name))", systemImage: "checkmark")
+                Label(title, systemImage: "checkmark")
             } else {
-                Text("\(choice.displayName)  (\(choice.source.name))")
+                Text(title)
             }
         }
     }

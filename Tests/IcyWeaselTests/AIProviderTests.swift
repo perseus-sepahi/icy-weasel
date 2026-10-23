@@ -238,4 +238,79 @@ final class AIProviderTests: XCTestCase {
         AIKeychain.delete(account)
         XCTAssertNil(AIKeychain.load(account))
     }
+
+    // MARK: OpenRouter keys and free models
+
+    private let openRouter = AISource(id: "cloud:or", name: "OpenRouter", kind: .openAI,
+                                      baseURL: URL(string: "https://openrouter.ai/api/v1")!, isLocal: false)
+
+    func testFreeModelsAreMarkedFromTheProvidersOwnList() throws {
+        let json = """
+            {"data": [
+              {"id": "vendor/fast-model:free", "pricing": {"prompt": "0", "completion": "0"}},
+              {"id": "vendor/zero-priced", "pricing": {"prompt": "0", "completion": "0.0"}},
+              {"id": "vendor/paid", "pricing": {"prompt": "0.000002", "completion": "0.000008"}},
+              {"id": "openrouter/auto", "pricing": {"prompt": "-1", "completion": "-1"}},
+              {"id": "vendor/music-preview", "pricing": {"prompt": "0", "completion": "0"},
+               "architecture": {"output_modalities": ["audio"]}},
+              {"id": "text-embedding-3-small"}
+            ]}
+            """
+        let listed = try LocalAIDiscovery.modelList(Data(json.utf8))
+        XCTAssertEqual(listed.map(\.id), ["vendor/fast-model:free", "vendor/zero-priced", "vendor/paid", "openrouter/auto"],
+                       "embeddings and models that can't write text are dropped")
+        XCTAssertEqual(listed.map(\.isFree), [true, true, false, false])
+        XCTAssertEqual(try LocalAIDiscovery.modelList(Data(#"{"data":[{"id":"gpt-5"}]}"#.utf8)).map(\.isFree), [false],
+                       "a list without prices marks nothing free")
+        let odd = #"{"data":[{"id":"a","pricing":{"prompt":0,"completion":0}},{"id":"b","pricing":"n/a","architecture":7}]}"#
+        XCTAssertEqual(try LocalAIDiscovery.modelList(Data(odd.utf8)).map(\.isFree), [true, false],
+                       "numeric prices count, and an unexpected field never hides the list")
+    }
+
+    /// OpenRouter shows its model list to anyone, so the key is checked on its own endpoints.
+    func testOpenRouterKeyCheckTellsKeyTypesApart() async {
+        func check(keys: Int, key: Int?, body: String = "{}") async -> CloudKeyCheck {
+            await CloudKeyCheck.openRouter(openRouter, apiKey: "test-key") { path in
+                if path == "keys" { return (keys, Data()) }
+                return key.map { ($0, Data(body.utf8)) }
+            }
+        }
+        let management = await check(keys: 200, key: 200)
+        XCTAssertEqual(management, .managementKey)
+        XCTAssertFalse(management.canRunModels)
+        XCTAssertTrue(management.message.contains("management key"))
+
+        let freeTier = await check(keys: 401, key: 200, body: """
+            {"data": {"is_free_tier": true, "free_model_daily_requests": {"limit": 50, "used": 3, "remaining": 47}}}
+            """)
+        XCTAssertEqual(freeTier, .usable("Free models: 47 of 50 requests left today"))
+        let noCounter = await check(keys: 403, key: 200, body: #"{"data": {"is_free_tier": true}}"#)
+        XCTAssertEqual(noCounter, .usable("No credits bought yet: free models only, up to 50 requests a day"))
+        let paidUp = await check(keys: 401, key: 200, body: #"{"data": {"is_free_tier": false}}"#)
+        XCTAssertEqual(paidUp, .usable(nil))
+
+        let wrong = await check(keys: 401, key: 401)
+        XCTAssertEqual(wrong, .rejected)
+        XCTAssertFalse(wrong.canRunModels)
+        let offline = await check(keys: 401, key: nil)
+        XCTAssertEqual(offline, .unknown)
+        XCTAssertTrue(offline.canRunModels, "an unreachable provider doesn't hide a key that may work")
+    }
+
+    func testRefusedRequestsAreExplained() {
+        let free = AIModelChoice(source: openRouter, model: "vendor/fast-model:free", isFree: true)
+        let paid = AIModelChoice(source: openRouter, model: "vendor/paid")
+        let keyRefused = AIClient.explanation(AIClient.Failure.http(401, "No auth credentials found"), choice: free)
+        XCTAssertTrue(keyRefused.contains("regular API key from openrouter.ai/settings/keys"))
+        XCTAssertTrue(keyRefused.hasSuffix("OpenRouter said: No auth credentials found"))
+        XCTAssertTrue(AIClient.explanation(AIClient.Failure.http(402, ""), choice: paid).contains("Free list"))
+        XCTAssertTrue(AIClient.explanation(AIClient.Failure.http(429, ""), choice: free).contains("50 a day"))
+
+        let other = AIModelChoice(source: AISource(id: "cloud:x", name: "Groq", kind: .openAI,
+                                                   baseURL: URL(string: "https://api.groq.com/openai/v1")!, isLocal: false),
+                                  model: "llama")
+        XCTAssertEqual(AIClient.explanation(AIClient.Failure.http(401, ""), choice: other),
+                       "Groq didn't accept the API key. Check it in Settings > AI.")
+        XCTAssertEqual(AIClient.explanation(AIClient.Failure.http(500, "boom"), choice: other), "Groq couldn't answer: boom")
+    }
 }

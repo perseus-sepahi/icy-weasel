@@ -115,6 +115,9 @@ final class PageAssistant {
             for config in settings.cloudAIProviders {
                 guard let source = config.source else { continue }
                 let key = AIKeychain.load(config.id)
+                // OpenRouter lists models to anyone; skip them when its key can't run them.
+                if config.preset == .openRouter, let key,
+                   !(await CloudKeyCheck.openRouter(source, apiKey: key)).canRunModels { continue }
                 var models = await LocalAIDiscovery.models(at: source, apiKey: key)
                 if models.isEmpty, !config.manualModel.isEmpty {
                     models = [AIModelChoice(source: source, model: config.manualModel)]
@@ -285,7 +288,7 @@ final class PageAssistant {
         } catch is CancellationError {
         } catch {
             if !Task.isCancelled {
-                setReply("\(choice.source.name) couldn't answer: \(error.localizedDescription)")
+                setReply(AIClient.explanation(error, choice: choice))
             }
         }
     }

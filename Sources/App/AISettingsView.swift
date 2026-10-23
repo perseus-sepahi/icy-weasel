@@ -17,6 +17,8 @@ struct AISettingsView: View {
     @State private var manualModel = ""
     @State private var addResult: String?
     @State private var adding = false
+    /// What OpenRouter says about each saved key, by provider id.
+    @State private var keyChecks: [String: CloudKeyCheck] = [:]
 
     var body: some View {
         @Bindable var settings = services.settings
@@ -27,6 +29,7 @@ struct AISettingsView: View {
         }
         .formStyle(.grouped)
         .task { await scan() }
+        .task { await checkKeys() }
     }
 
     // MARK: On this Mac
@@ -100,8 +103,7 @@ struct AISettingsView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(config.name).font(.system(size: 13, weight: .medium))
-                        Text(AIKeychain.load(config.id) == nil ? "No API key saved" : "API key saved in your keychain")
-                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                        keyStatus(config)
                     }
                     Spacer()
                     Button("Remove") {
@@ -119,6 +121,20 @@ struct AISettingsView: View {
                 the first send and shows where pages go. Private windows only use local models. Keys are stored \
                 in your macOS keychain and sent only to their own provider over HTTPS.
                 """)
+        }
+    }
+
+    @ViewBuilder
+    private func keyStatus(_ config: CloudProviderConfig) -> some View {
+        if AIKeychain.load(config.id) == nil {
+            Text("No API key saved").font(.system(size: 11)).foregroundStyle(.secondary)
+        } else if let check = keyChecks[config.id] {
+            Text(check.message).font(.system(size: 11))
+                .foregroundStyle(check.canRunModels ? Color.secondary : Theme.warning)
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
+            Text(config.preset == .openRouter ? "Checking the key…" : "API key saved in your keychain")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
         }
     }
 
@@ -182,6 +198,12 @@ struct AISettingsView: View {
         adding = true
         defer { adding = false }
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        var check: CloudKeyCheck?
+        if config.preset == .openRouter {
+            let result = await CloudKeyCheck.openRouter(source, apiKey: key)
+            guard result.canRunModels else { addResult = result.message; return }
+            check = result
+        }
         let models = await LocalAIDiscovery.models(at: source, apiKey: key)
         guard !models.isEmpty || !config.manualModel.isEmpty else {
             addResult = "Couldn't list models with that key. Check the key, or enter a model name."
@@ -192,7 +214,17 @@ struct AISettingsView: View {
             return
         }
         settings.cloudAIProviders.append(config)
-        addResult = models.isEmpty ? "Added, using \(config.manualModel)." : "Added, \(models.count) models available."
+        if let check { keyChecks[config.id] = check }
+        let free = models.filter(\.isFree).count
+        addResult = models.isEmpty ? "Added, using \(config.manualModel)."
+            : "Added, \(models.count) models available" + (free > 0 ? ", \(free) of them free." : ".")
         apiKey = ""; manualModel = ""; customName = ""; customBaseURL = ""
+    }
+
+    private func checkKeys() async {
+        for config in services.settings.cloudAIProviders where config.preset == .openRouter {
+            guard let source = config.source, let key = AIKeychain.load(config.id) else { continue }
+            keyChecks[config.id] = await CloudKeyCheck.openRouter(source, apiKey: key)
+        }
     }
 }
