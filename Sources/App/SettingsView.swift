@@ -187,8 +187,53 @@ private struct GeneralSettings: View {
             Section("Windows") {
                 Toggle("Open every window as private", isOn: $settings.ephemeralByDefault)
             }
+            ReadAloudSettings(settings: settings)
         }
         .formStyle(.grouped)
+    }
+}
+
+private struct ReadAloudSettings: View {
+    @Bindable var settings: BrowserSettings
+    @State private var preview: PageReader?
+
+    var body: some View {
+        Section {
+            if PhononEngine.isSupported {
+                Picker("Voice", selection: $settings.readAloudVoice) {
+                    ForEach(PhononEngine.voices, id: \.self) { Text($0).tag($0) }
+                    Divider()
+                    Text("Apple's voice").tag(BrowserSettings.systemReadAloudVoice)
+                }
+            }
+            Picker("Speed", selection: $settings.readAloudRate) {
+                ForEach([0.75, 1.0, 1.25, 1.5, 1.75, 2.0], id: \.self) { rate in
+                    Text(rate == 1 ? "Normal" : String(format: "%g×", rate)).tag(rate)
+                }
+            }
+            HStack {
+                Spacer()
+                Button(preview?.isActive == true ? "Stop" : "Listen") { listen() }
+            }
+        } header: {
+            Text("Read Aloud")
+        } footer: {
+            Text(PhononEngine.isSupported
+                 ? "Pages are read on this Mac by Phonon, Gradium's open voice model. Nothing is sent anywhere. Read a page with the speaker in the toolbar or ⌥⌘R."
+                 : "Pages are read on this Mac with Apple's voices; add more in System Settings › Accessibility › Spoken Content. Nothing is sent anywhere. Read a page with the speaker in the toolbar or ⌥⌘R.")
+        }
+        .onChange(of: settings.readAloudVoice) { preview?.stop() }
+        .onDisappear { preview?.stop() }
+    }
+
+    private func listen() {
+        let reader = preview ?? PageReader(settings: settings)
+        preview = reader
+        if reader.isActive {
+            reader.stop()
+        } else {
+            reader.speak(["This is how pages sound when Icy Weasel reads them to you."])
+        }
     }
 }
 

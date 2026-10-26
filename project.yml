@@ -18,6 +18,8 @@ settings:
     SWIFT_STRICT_CONCURRENCY: minimal
     DEAD_CODE_STRIPPING: YES
     CLANG_ENABLE_MODULES: YES
+    # Phonon's C module (scripts/fetch-phonon.sh), for the app and its tests.
+    SWIFT_INCLUDE_PATHS: $(SRCROOT)/ThirdParty/Phonon/include
 
 targets:
   IcyWeasel:
@@ -27,9 +29,28 @@ targets:
       - path: Sources
       - path: Resources
         excludes: ["FilterLists/**"]
+    # Phonon's voice model for Read Page Aloud, from scripts/fetch-phonon.sh.
+    # Copied by a script rather than listed as a resource, because it may be
+    # absent (a fresh clone): then the app reads with Apple's voices. Code
+    # signing runs after this, so the model is sealed like any resource.
+    postBuildScripts:
+      - name: Copy Phonon model
+        basedOnDependencyAnalysis: false
+        script: |
+          src="$SRCROOT/ThirdParty/Phonon/PhononModel"
+          dst="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/PhononModel"
+          if [ -d "$src" ]; then
+            rsync -a --delete "$src/" "$dst/"
+          else
+            rm -rf "$dst"
+            echo "warning: Phonon is not fetched (scripts/fetch-phonon.sh); Read Page Aloud will use Apple's voices."
+          fi
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.icyweasel.browser
+        # Phonon's C library, arm64 only: the Intel slice never imports it
+        # (PhononEngine checks `arch(arm64)`), so it never links it either.
+        "LIBRARY_SEARCH_PATHS[arch=arm64]": $(SRCROOT)/ThirdParty/Phonon/lib
         PRODUCT_NAME: Icy Weasel
         CODE_SIGN_ENTITLEMENTS: Resources/IcyWeasel.entitlements
         CODE_SIGN_IDENTITY: "-"

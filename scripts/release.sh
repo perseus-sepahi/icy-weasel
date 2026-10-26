@@ -29,6 +29,9 @@ ARCHIVE=$OUT/IcyWeasel.xcarchive
 APP_NAME="Icy Weasel"
 
 archive() {
+  # Read Page Aloud's voice. A release never ships without it: if the
+  # download or its checksum fails, so does the release.
+  scripts/fetch-phonon.sh
   xcodegen generate >/dev/null
   rm -rf "$ARCHIVE"
   xcodebuild archive -project IcyWeasel.xcodeproj -scheme IcyWeasel -configuration Release \

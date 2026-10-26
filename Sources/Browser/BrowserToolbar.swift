@@ -22,6 +22,7 @@ struct BrowserToolbar: View {
                 DownloadsButton(model: model)
             }
             ShieldButton(model: model)
+            ReadAloudButtons(model: model, reader: model.reader)
             Button { model.showAssistant.toggle() } label: {
                 Image(systemName: "sparkles")
                     .font(.system(size: 14, weight: .medium))
@@ -163,6 +164,63 @@ private struct ShieldButton: View {
         .help(relaxed ? "Protections relaxed on this site" : "Protections active")
         .popover(isPresented: $model.showSitePanel, arrowEdge: .bottom) {
             SitePanel(model: model)
+        }
+    }
+}
+
+/// Read Page Aloud: the speaker starts reading, then turns into pause and
+/// resume; a stop button sits beside it while anything is being read.
+private struct ReadAloudButtons: View {
+    let model: BrowserViewModel
+    let reader: PageReader
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Button { model.toggleReadAloud() } label: {
+                Group {
+                    if reader.state == .starting {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: symbol)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(reader.isActive ? AnyShapeStyle(Theme.iceGradient) : AnyShapeStyle(.secondary))
+                    }
+                }
+                .frame(width: 28, height: 28).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).focusEffectDisabled()
+            .disabled(reader.state == .starting || (!reader.isActive && model.selectedTab?.url == nil))
+            .help(help)
+
+            if reader.isActive {
+                Button { reader.stop() } label: {
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 22, height: 28).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).focusEffectDisabled()
+                .help("Stop reading (⌥⌘.)")
+            }
+        }
+    }
+
+    private var symbol: String {
+        switch reader.state {
+        case .reading: "pause.fill"
+        case .paused: "play.fill"
+        case .idle, .starting: "speaker.wave.2"
+        }
+    }
+
+    private var help: String {
+        switch reader.state {
+        case .reading: return "Pause reading (⌥⌘R)"
+        case .paused: return "Resume reading (⌥⌘R)"
+        case .starting: return "Getting ready to read…"
+        case .idle:
+            let base = "Read this page aloud, or just the selected text (⌥⌘R)"
+            return reader.problem.map { "\(base)\n\($0)" } ?? base
         }
     }
 }

@@ -27,6 +27,8 @@ final class BrowserSettings {
             Keys.javaScriptHardening: JavaScriptHardening.hardened.rawValue,
             Keys.globalPrivacyControl: true,
             Keys.restoreSession: true,
+            Keys.readAloudVoice: PhononEngine.defaultVoice,
+            Keys.readAloudRate: 1.0,
             Keys.enabledFilterLists: FilterListCatalog.all.filter(\.defaultEnabled).map(\.id)
         ])
     }
@@ -60,6 +62,23 @@ final class BrowserSettings {
         static let offerToSavePasswords = "offerToSavePasswords"
         static let neverSavePasswordHosts = "neverSavePasswordHosts"
         static let appearance = "appearance"
+        static let readAloudVoice = "readAloudVoice"
+        static let readAloudRate = "readAloudRate"
+    }
+
+    /// Read Page Aloud's voice: one of `PhononEngine.voices`, or
+    /// `systemReadAloudVoice` for Apple's. Macs that can't run Phonon use
+    /// Apple's whatever this says.
+    var readAloudVoice: String {
+        get { access(keyPath: \.readAloudVoice); return defaults.string(forKey: Keys.readAloudVoice) ?? PhononEngine.defaultVoice }
+        set { withMutation(keyPath: \.readAloudVoice) { defaults.set(newValue, forKey: Keys.readAloudVoice) } }
+    }
+    static let systemReadAloudVoice = "system"
+
+    /// 1 is the voice's natural pace.
+    var readAloudRate: Double {
+        get { access(keyPath: \.readAloudRate); return defaults.double(forKey: Keys.readAloudRate) }
+        set { withMutation(keyPath: \.readAloudRate) { defaults.set(newValue, forKey: Keys.readAloudRate) } }
     }
 
     /// "system", "light" or "dark".

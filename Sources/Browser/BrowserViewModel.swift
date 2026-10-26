@@ -14,6 +14,7 @@ final class BrowserViewModel {
     let profile: WebViewFactory.Profile
     let library: BrowsingLibrary
     let assistant: PageAssistant
+    let reader: PageReader
 
     var suggestionIndex: Int?
     /// History/bookmark matches for what is being typed. Empty unless the user
@@ -86,6 +87,7 @@ final class BrowserViewModel {
         // Private windows get a throwaway in-memory library: nothing is recorded.
         self.library = privateWindow ? BrowsingLibrary(directory: nil) : (library ?? BrowsingLibrary(directory: nil))
         self.assistant = PageAssistant(settings: settings, isPrivate: privateWindow)
+        self.reader = PageReader(settings: settings)
         self.restoresSession = restoreSession && !privateWindow
         // Same for per-site settings: a private window starts from the saved
         // ones but never writes the sites it visits to disk.
@@ -250,6 +252,7 @@ final class BrowserViewModel {
             closedTabs.append((url, tab.groupID))
             if closedTabs.count > 25 { closedTabs.removeFirst() }
         }
+        reader.tabClosed(tab.id)
         tab.discard()
         tabs.remove(at: index)
         pruneEmptyGroups()
@@ -266,6 +269,16 @@ final class BrowserViewModel {
 
     func closeSelectedTab() {
         if let tab = selectedTab { close(tab) }
+    }
+
+    /// Read Page Aloud's one button: start reading this tab, or pause and
+    /// resume whatever is being read.
+    func toggleReadAloud() {
+        if reader.isActive {
+            reader.togglePause()
+        } else if let tab = selectedTab {
+            reader.read(tab)
+        }
     }
 
     func selectTab(offset: Int) {

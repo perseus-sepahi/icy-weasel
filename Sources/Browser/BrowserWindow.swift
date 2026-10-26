@@ -17,6 +17,10 @@ struct BrowserWindow: View {
                     .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { note in
                         if let window, (note.object as? NSWindow) === window { services.activeBrowser = model }
                     }
+                    // Reading aloud belongs to the window: closing it goes quiet.
+                    .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { note in
+                        if let window, (note.object as? NSWindow) === window { model.reader.stop() }
+                    }
                     .onOpenURL { url in
                         guard !isPrivate, ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return }
                         if model.selectedTab?.url == nil { model.selectedTab?.load(url) }

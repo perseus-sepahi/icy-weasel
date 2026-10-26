@@ -169,6 +169,21 @@ injection in the page and checks the model still answers from the facts).
 Bonsai-style end-to-end test runs against `scripts/fake-ai-server.py`, because the app
 sandbox can't host a server itself.
 
+### Read Page Aloud
+The speaker in the toolbar (⌥⌘R) reads the selected text, or else the page's article:
+`<article>`/`<main>` when the page marks one, otherwise the block holding the most
+paragraph text, skipping navigation, asides, hidden elements and code
+(`Sources/ReadAloud/PageReader.swift`). The text is read in the isolated world and
+spoken on the Mac; nothing is sent anywhere.
+
+The voice is [Phonon 31m](https://gradium.ai/phonon), Gradium's open on-device model
+(Apache 2.0), with its 37 English voices, on the Neural Engine through Core ML. Audio
+streams in 80 ms chunks, so reading starts at once, and generation runs at most 20 s
+ahead of playback. Phonon's core is arm64 only and its models need macOS 15, so on Intel
+Macs and macOS 14 the same button reads with Apple's voices. Voice and speed are in
+Settings > General. `ReadAloudTests` check the extraction on real pages, that Phonon
+produces speech, plays to the end and stops cleanly.
+
 ### Passwords
 Sign-ins are offered for saving after a real submit (`Resources/JS/password-manager.js`,
 isolated world; synthetic events from the page are ignored) and stored as internet
@@ -306,6 +321,7 @@ by Apple. Data lives in `~/Library/Containers/com.icyweasel.browser/`.
 To build and install from source instead:
 
 ```bash
+scripts/fetch-phonon.sh   # Read Page Aloud's voice; optional, see Building
 xcodegen generate
 xcodebuild -project IcyWeasel.xcodeproj -scheme IcyWeasel -configuration Release -derivedDataPath build CODE_SIGN_IDENTITY="-" build
 ditto "build/Build/Products/Release/Icy Weasel.app" "/Applications/Icy Weasel.app"
@@ -326,12 +342,18 @@ listing text is in `distribution/AppStore.md`; the website is in `site/`.
 Requires Xcode 27 and [XcodeGen](https://github.com/yonaskolb/XcodeGen).
 
 ```bash
+scripts/fetch-phonon.sh
 xcodegen generate
 xcodebuild -project IcyWeasel.xcodeproj -scheme IcyWeasel -configuration Release build
 ```
 
 Runs on macOS 14+. Hardened JavaScript needs macOS 26.4+, native HTTPS-only 15.2+,
 Global Privacy Control 27; on older systems those fall back or are skipped.
+
+`scripts/fetch-phonon.sh` downloads Phonon's library (51 MB) and model (163 MB) from
+Gradium's pinned release into `ThirdParty/Phonon`, checking each against a fixed
+SHA-256; they are kept out of git. Without them the app still builds and reads aloud
+with Apple's voices. `scripts/release.sh` always fetches them.
 
 ## Testing
 
@@ -362,6 +384,7 @@ Sources/
   App/        entry point, menus, settings
   Browser/    window, tabs, toolbar, shield panel, downloads, find, web view factory
   Blocking/   ABP parser → layered WebKit rule compiler → cached rule-list store
+  ReadAloud/  Read Page Aloud: page text, Phonon engine, playback
   Security/   site policy, URL sanitiser, script injection
   Support/    settings, theme
 Resources/
@@ -376,6 +399,10 @@ Tests/        unit, WebKit integration, probes, live experiments
 
 Icy Weasel is licensed under the [Mozilla Public License 2.0](LICENSE).
 © 2026 Mohammadreza Sepahi.
+
+Read Page Aloud uses [Phonon](https://github.com/gradium-ai/xn-ptts) by Gradium: its
+runtime under MIT or Apache 2.0, the Phonon 31m model and voices under Apache 2.0. The
+licence texts ship inside the app with the model (`Resources/PhononModel`).
 
 Filter lists are not bundled; the app downloads them at run time from their publishers,
 and each stays under its own license (EasyList and EasyPrivacy: GPLv3 or CC BY-SA 3.0;

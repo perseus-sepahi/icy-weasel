@@ -6,6 +6,14 @@ struct BrowserCommands: Commands {
 
     private var browser: BrowserViewModel? { services.activeBrowser }
 
+    private var readAloudTitle: String {
+        switch browser?.reader.state {
+        case .reading: "Pause Reading"
+        case .paused: "Resume Reading"
+        default: "Read Page Aloud"
+        }
+    }
+
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
             Button("New Tab") { browser?.openTab(url: nil, inBackground: false) }
@@ -80,6 +88,11 @@ struct BrowserCommands: Commands {
             Divider()
             Button("Ask AI About This Page") { browser?.showAssistant.toggle() }
                 .keyboardShortcut("a", modifiers: [.command, .option])
+            Button(readAloudTitle) { browser?.toggleReadAloud() }
+                .keyboardShortcut("r", modifiers: [.command, .option])
+            Button("Stop Reading") { browser?.reader.stop() }
+                .keyboardShortcut(".", modifiers: [.command, .option])
+                .disabled(browser?.reader.isActive != true)
         }
 
         CommandMenu("Protection") {
