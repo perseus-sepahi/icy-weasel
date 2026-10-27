@@ -27,7 +27,7 @@ final class BrowserSettings {
             Keys.javaScriptHardening: JavaScriptHardening.hardened.rawValue,
             Keys.globalPrivacyControl: true,
             Keys.restoreSession: true,
-            Keys.readAloudVoice: PhononEngine.defaultVoice,
+            Keys.readAloudEngine: ReadAloudEngine.phonon31m.rawValue,
             Keys.readAloudRate: 1.0,
             Keys.enabledFilterLists: FilterListCatalog.all.filter(\.defaultEnabled).map(\.id)
         ])
@@ -62,18 +62,27 @@ final class BrowserSettings {
         static let offerToSavePasswords = "offerToSavePasswords"
         static let neverSavePasswordHosts = "neverSavePasswordHosts"
         static let appearance = "appearance"
-        static let readAloudVoice = "readAloudVoice"
+        static let readAloudEngine = "readAloudEngine"
+        static let readAloudVoices = "readAloudVoices"
         static let readAloudRate = "readAloudRate"
     }
 
-    /// Read Page Aloud's voice: one of `PhononEngine.voices`, or
-    /// `systemReadAloudVoice` for Apple's. Macs that can't run Phonon use
-    /// Apple's whatever this says.
-    var readAloudVoice: String {
-        get { access(keyPath: \.readAloudVoice); return defaults.string(forKey: Keys.readAloudVoice) ?? PhononEngine.defaultVoice }
-        set { withMutation(keyPath: \.readAloudVoice) { defaults.set(newValue, forKey: Keys.readAloudVoice) } }
+    /// Which voice reads pages. A Phonon model that can't run here, or isn't
+    /// downloaded, or doesn't speak the page's language, gives way to Apple's
+    /// voice for that language (`PageReader.plan`).
+    var readAloudEngine: ReadAloudEngine {
+        get {
+            access(keyPath: \.readAloudEngine)
+            return ReadAloudEngine(rawValue: defaults.string(forKey: Keys.readAloudEngine) ?? "") ?? .phonon31m
+        }
+        set { withMutation(keyPath: \.readAloudEngine) { defaults.set(newValue.rawValue, forKey: Keys.readAloudEngine) } }
     }
-    static let systemReadAloudVoice = "system"
+
+    /// The Phonon voice chosen for each language, e.g. ["en": "Zoey", "fr": "Noémie"].
+    var readAloudVoices: [String: String] {
+        get { access(keyPath: \.readAloudVoices); return defaults.dictionary(forKey: Keys.readAloudVoices) as? [String: String] ?? [:] }
+        set { withMutation(keyPath: \.readAloudVoices) { defaults.set(newValue, forKey: Keys.readAloudVoices) } }
+    }
 
     /// 1 is the voice's natural pace.
     var readAloudRate: Double {

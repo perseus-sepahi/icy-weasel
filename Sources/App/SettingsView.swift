@@ -196,14 +196,44 @@ private struct GeneralSettings: View {
 private struct ReadAloudSettings: View {
     @Bindable var settings: BrowserSettings
     @State private var preview: PageReader?
+    @State private var previewLanguage: String?
+    private let download = PhononModelDownload.shared
+
+    private static let samples = [
+        "en": "This is how pages sound when Icy Weasel reads them to you.",
+        "fr": "Voici comment Icy Weasel vous lit les pages.",
+        "de": "So klingen Seiten, wenn Icy Weasel sie Ihnen vorliest.",
+        "es": "Así suenan las páginas cuando Icy Weasel te las lee.",
+        "pt": "É assim que as páginas soam quando o Icy Weasel as lê para você.",
+    ]
+
+    /// The Phonon model whose voices to offer: the chosen one, or the
+    /// built-in English one while the multilingual download is missing.
+    private var voiceModel: PhononModel? {
+        guard let chosen = settings.readAloudEngine.model else { return nil }
+        if chosen.isAvailable { return chosen }
+        return PhononModel.english31m.isAvailable ? .english31m : nil
+    }
 
     var body: some View {
         Section {
-            if PhononEngine.isSupported {
-                Picker("Voice", selection: $settings.readAloudVoice) {
-                    ForEach(PhononEngine.voices, id: \.self) { Text($0).tag($0) }
-                    Divider()
-                    Text("Apple's voice").tag(BrowserSettings.systemReadAloudVoice)
+            if PhononEngine.canRun {
+                Picker("Voice model", selection: $settings.readAloudEngine) {
+                    ForEach(ReadAloudEngine.offered) { Text($0.title).tag($0) }
+                }
+                if settings.readAloudEngine == .phonon40mMultilingual {
+                    multilingualDownload
+                }
+            }
+            if let model = voiceModel {
+                ForEach(model.languages, id: \.self) { language in
+                    voiceRow(model: model, language: language)
+                }
+            } else {
+                HStack {
+                    Text("Apple's voice, in each page's language").foregroundStyle(.secondary)
+                    Spacer()
+                    listenButton("en")
                 }
             }
             Picker("Speed", selection: $settings.readAloudRate) {
@@ -211,28 +241,92 @@ private struct ReadAloudSettings: View {
                     Text(rate == 1 ? "Normal" : String(format: "%g×", rate)).tag(rate)
                 }
             }
-            HStack {
-                Spacer()
-                Button(preview?.isActive == true ? "Stop" : "Listen") { listen() }
-            }
         } header: {
             Text("Read Aloud")
         } footer: {
-            Text(PhononEngine.isSupported
-                 ? "Pages are read on this Mac by Phonon, Gradium's open voice model. Nothing is sent anywhere. Read a page with the speaker in the toolbar or ⌥⌘R."
-                 : "Pages are read on this Mac with Apple's voices; add more in System Settings › Accessibility › Spoken Content. Nothing is sent anywhere. Read a page with the speaker in the toolbar or ⌥⌘R.")
+            Text(footer)
         }
-        .onChange(of: settings.readAloudVoice) { preview?.stop() }
+        // Choosing a model lets you hear it straight away.
+        .onChange(of: settings.readAloudEngine) { playSample("en") }
         .onDisappear { preview?.stop() }
     }
 
-    private func listen() {
+    private var footer: String {
+        let how = "Read a page with the speaker in the toolbar or ⌥⌘R. It is read in the page's language, on this Mac; nothing is sent anywhere."
+        guard PhononEngine.canRun else {
+            return "Pages are read with Apple's voices; add more in System Settings › Accessibility › Spoken Content. " + how
+        }
+        return "Phonon is Gradium's open voice model. Languages the chosen model doesn't speak are read by Apple's voice. " + how
+    }
+
+    private func voiceRow(model: PhononModel, language: String) -> some View {
+        let name = Locale.current.localizedString(forLanguageCode: language) ?? language
+        let binding = Binding<String>(
+            get: { PhononEngine.voice(of: model, language: language, preferred: settings.readAloudVoices[language]) ?? "" },
+            set: { voice in
+                settings.readAloudVoices[language] = voice
+                // Choosing a voice plays it, so the menu doubles as a sampler.
+                playSample(language)
+            })
+        return HStack {
+            Picker(model.languages.count > 1 ? name : "Voice", selection: binding) {
+                ForEach(PhononEngine.voices(of: model).filter { $0.language == language }) { voice in
+                    Text(voice.label).tag(voice.name)
+                }
+            }
+            listenButton(language)
+        }
+    }
+
+    private func listenButton(_ language: String) -> some View {
+        let playing = preview?.isActive == true && previewLanguage == language
+        return Button(playing ? "Stop" : "Listen") {
+            if playing { preview?.stop() } else { playSample(language) }
+        }
+    }
+
+    /// Says the sample line in the voice now chosen for `language`, cutting
+    /// off any sample still playing.
+    private func playSample(_ language: String) {
         let reader = preview ?? PageReader(settings: settings)
         preview = reader
-        if reader.isActive {
-            reader.stop()
-        } else {
-            reader.speak(["This is how pages sound when Icy Weasel reads them to you."])
+        reader.stop()
+        previewLanguage = language
+        reader.speak([Self.samples[language] ?? Self.samples["en"]!], language: language)
+    }
+
+    @ViewBuilder
+    private var multilingualDownload: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            switch download.state {
+            case .missing:
+                HStack {
+                    Text("Not downloaded. Until it is, English pages use Phonon 31M.").foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Download (\(download.sizeDescription))") { download.start() }
+                }
+            case .downloading(let fraction):
+                HStack {
+                    ProgressView(value: fraction)
+                    Button("Cancel") { download.cancel() }
+                }
+            case .installing:
+                HStack { ProgressView().controlSize(.small); Text("Checking and unpacking…").foregroundStyle(.secondary) }
+            case .ready:
+                HStack {
+                    Label("Downloaded", systemImage: "checkmark.circle").foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Remove") { download.remove() }
+                }
+            case .failed(let message):
+                HStack {
+                    Text(message).foregroundStyle(Theme.warning)
+                    Spacer()
+                    Button("Try Again") { download.start() }
+                }
+            }
+            Text("English, French, German, Spanish and Portuguese. Free for non-commercial use only (CC BY-NC 4.0, by Gradium); it is a separate download, not part of Icy Weasel's licence.")
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 }

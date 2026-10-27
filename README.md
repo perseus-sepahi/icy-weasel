@@ -176,13 +176,25 @@ paragraph text, skipping navigation, asides, hidden elements and code
 (`Sources/ReadAloud/PageReader.swift`). The text is read in the isolated world and
 spoken on the Mac; nothing is sent anywhere.
 
-The voice is [Phonon 31m](https://gradium.ai/phonon), Gradium's open on-device model
-(Apache 2.0), with its 37 English voices, on the Neural Engine through Core ML. Audio
-streams in 80 ms chunks, so reading starts at once, and generation runs at most 20 s
+Pages are read in their own language, recognised from the text. The voice is
+[Phonon](https://gradium.ai/phonon), Gradium's open on-device model, on the Neural Engine
+through Core ML; Settings > General chooses the model, a voice per language and the speed; choosing a
+voice or model plays a sample in it:
+
+- **Phonon 31m** (English, Apache 2.0, 37 voices) ships inside the app.
+- **Phonon 40m multilingual** (English, French, German, Spanish, Portuguese; 102 voices)
+  is CC BY-NC 4.0, so it is never part of the app: Settings offers it as a separate, free
+  download from this repository's releases, made by `scripts/export-phonon-multilingual.sh`
+  and checked against a pinned SHA-256 before it is unpacked. Its licence and a note of the
+  changes (converted to Core ML, catalog voices added) travel inside it. *Not published
+  yet:* until its checksum is pinned in `PhononModelDownload`, Settings doesn't offer it.
+
+A language the chosen model doesn't speak is read by Apple's voice for that language.
+Audio streams in 80 ms chunks, so reading starts at once, and generation runs at most 20 s
 ahead of playback. Phonon's core is arm64 only and its models need macOS 15, so on Intel
-Macs and macOS 14 the same button reads with Apple's voices. Voice and speed are in
-Settings > General. `ReadAloudTests` check the extraction on real pages, that Phonon
-produces speech, plays to the end and stops cleanly.
+Macs and macOS 14 the same button reads with Apple's voices. `ReadAloudTests` check the
+extraction on real pages, language recognition and routing, that Phonon produces speech,
+plays to the end and stops cleanly, and that a download is unpacked and checked.
 
 ### Passwords
 Sign-ins are offered for saving after a real submit (`Resources/JS/password-manager.js`,
@@ -402,7 +414,10 @@ Icy Weasel is licensed under the [Mozilla Public License 2.0](LICENSE).
 
 Read Page Aloud uses [Phonon](https://github.com/gradium-ai/xn-ptts) by Gradium: its
 runtime under MIT or Apache 2.0, the Phonon 31m model and voices under Apache 2.0. The
-licence texts ship inside the app with the model (`Resources/PhononModel`).
+licence texts ship inside the app with the model (`Resources/PhononModel`). The optional
+Phonon 40m multilingual download is CC BY-NC 4.0 — non-commercial use only — and is not
+covered by this repository's MPL: a commercial fork may not ship or offer it without a
+licence from Gradium.
 
 Filter lists are not bundled; the app downloads them at run time from their publishers,
 and each stays under its own license (EasyList and EasyPrivacy: GPLv3 or CC BY-SA 3.0;

@@ -1,11 +1,13 @@
 import Foundation
 import AVFoundation
 import WebKit
+import NaturalLanguage
 import Observation
 
 /// Read Page Aloud: speaks the selected text, or else the page's article, in
-/// Phonon's voice on this Mac, or in Apple's voice where Phonon can't run.
-/// Nothing leaves the Mac either way.
+/// the page's language. Phonon speaks it when the chosen model knows that
+/// language; anything else is read by Apple's voice for it. Nothing leaves
+/// the Mac either way.
 ///
 /// Phonon streams audio in 80 ms chunks, so reading starts within a moment.
 /// It makes audio much faster than it plays; generation runs at most
@@ -36,9 +38,29 @@ final class PageReader {
 
     var isActive: Bool { state != .idle }
 
-    /// The voice the settings ask for, if this Mac can use it.
-    var usesPhonon: Bool {
-        PhononEngine.isSupported && settings.readAloudVoice != BrowserSettings.systemReadAloudVoice
+    /// Who reads text in `language` ("en", "fr", …).
+    struct Plan: Equatable {
+        enum Voice: Equatable { case phonon(PhononModel, voice: String), apple }
+        let voice: Voice
+        let language: String
+    }
+
+    /// The chosen Phonon model when it is on this Mac and speaks `language`;
+    /// a chosen multilingual model that isn't downloaded yet gives way to the
+    /// built-in English one. Everything else is read by Apple's voice.
+    func plan(for language: String) -> Plan {
+        var models: [PhononModel] = []
+        if let chosen = settings.readAloudEngine.model {
+            models = [chosen]
+            if chosen != .english31m { models.append(.english31m) }
+        }
+        for model in models where model.isAvailable && model.languages.contains(language) {
+            if let voice = PhononEngine.voice(of: model, language: language,
+                                               preferred: settings.readAloudVoices[language]) {
+                return Plan(voice: .phonon(model, voice: voice), language: language)
+            }
+        }
+        return Plan(voice: .apple, language: language)
     }
 
     // MARK: Controls
@@ -50,24 +72,27 @@ final class PageReader {
         problem = nil
         tabID = tab.id
         Task {
-            let paragraphs = await Self.readableText(from: webView)
+            let page = await Self.readableText(from: webView)
             guard state == .starting, tabID == tab.id else { return }
-            guard !paragraphs.isEmpty else {
+            guard !page.paragraphs.isEmpty else {
                 problem = "There is no text on this page to read."
                 finish()
                 return
             }
-            speak(paragraphs)
+            speak(page.paragraphs, language: Self.language(of: page.paragraphs, declared: page.declaredLanguage))
         }
     }
 
-    /// Speaks `paragraphs` directly: the settings' Listen button, and tests.
-    func speak(_ paragraphs: [String]) {
+    /// Speaks `paragraphs` directly: the settings' Listen buttons, and tests.
+    /// Without a `language`, it is recognised from the text.
+    func speak(_ paragraphs: [String], language: String? = nil) {
         if state == .idle { state = .starting }
-        if usesPhonon {
-            startPhonon(paragraphs)
-        } else {
-            startSystem(paragraphs)
+        let plan = plan(for: language ?? Self.language(of: paragraphs, declared: nil))
+        switch plan.voice {
+        case .phonon(let model, let voice):
+            startPhonon(paragraphs, model: model, language: plan.language, voice: voice)
+        case .apple:
+            startSystem(paragraphs, language: plan.language)
         }
     }
 
@@ -104,8 +129,7 @@ final class PageReader {
 
     // MARK: Phonon
 
-    private func startPhonon(_ paragraphs: [String]) {
-        let voice = PhononEngine.voices.contains(settings.readAloudVoice) ? settings.readAloudVoice : PhononEngine.defaultVoice
+    private func startPhonon(_ paragraphs: [String], model: PhononModel, language: String, voice: String) {
         let session = PhononSession(rate: settings.readAloudRate)
         self.session = session
         session.onFirstAudio = { [weak self, weak session] in
@@ -119,17 +143,17 @@ final class PageReader {
                 // Phonon could not run (say, the model failed to compile):
                 // read with Apple's voice rather than not at all.
                 self.problem = "The Phonon voice failed (\(error)), so Apple's voice is reading."
-                self.startSystem(paragraphs)
+                self.startSystem(paragraphs, language: language)
             } else {
                 self.finish()
             }
         }
-        session.start(paragraphs, voice: voice)
+        session.start(paragraphs, model: model, language: language, voice: voice)
     }
 
     // MARK: Apple's voice
 
-    private func startSystem(_ paragraphs: [String]) {
+    private func startSystem(_ paragraphs: [String], language: String) {
         let delegate = SystemVoiceDelegate { [weak self] in
             guard let self, self.session == nil, self.state != .idle else { return }
             self.finish()
@@ -137,14 +161,40 @@ final class PageReader {
         systemDelegate = delegate
         system.delegate = delegate
         let utterance = AVSpeechUtterance(string: paragraphs.joined(separator: "\n\n"))
-        utterance.voice = AVSpeechSynthesisVoice(language: Locale.preferredLanguages.first) ?? AVSpeechSynthesisVoice(language: "en-US")
+        utterance.voice = Self.appleVoice(for: language)
         utterance.rate = min(AVSpeechUtteranceMaximumSpeechRate,
                              AVSpeechUtteranceDefaultSpeechRate * Float(settings.readAloudRate))
         system.speak(utterance)
         state = .reading
     }
 
+    /// Apple's best installed voice for `language`: the user's own region
+    /// first (so en-GB Macs get a British voice), then any, then English.
+    static func appleVoice(for language: String) -> AVSpeechSynthesisVoice? {
+        let regional = Locale.current.region.map { "\(language)-\($0.identifier)" }
+        let voices = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix(language) }
+        let best = voices.filter { $0.language == regional } + voices
+        return best.max { $0.quality.rawValue < $1.quality.rawValue }
+            ?? AVSpeechSynthesisVoice(language: language) ?? AVSpeechSynthesisVoice(language: "en-US")
+    }
+
     // MARK: Page text
+
+    struct PageText { var paragraphs: [String]; var declaredLanguage: String? }
+
+    /// The text's language as a two-letter code. Recognised from the text
+    /// itself, which pages get right far more often than their `lang`
+    /// attribute (many templates say "en" whatever they hold); the attribute
+    /// only decides when the text is too short to tell.
+    static func language(of paragraphs: [String], declared: String?) -> String {
+        let recognizer = NLLanguageRecognizer()
+        recognizer.processString(String(paragraphs.joined(separator: " ").prefix(4000)))
+        if let (language, confidence) = recognizer.languageHypotheses(withMaximum: 1).first, confidence > 0.6 {
+            return String(language.rawValue.prefix(2))
+        }
+        if let declared, declared.count >= 2 { return String(declared.prefix(2)).lowercased() }
+        return "en"
+    }
 
     /// The text to read, in paragraphs: the selection when there is one,
     /// otherwise the page's article — `<article>`/`<main>` when the page marks
@@ -152,10 +202,11 @@ final class PageReader {
     /// headings, paragraphs and list items, skipping navigation, asides,
     /// hidden elements and code. Runs in the isolated world, so the page
     /// cannot see or change it.
-    static func readableText(from webView: WKWebView) async -> [String] {
+    static func readableText(from webView: WKWebView) async -> PageText {
         let raw = try? await webView.callAsyncJavaScript("""
+            const lang = document.documentElement.lang || '';
             const selected = String(getSelection ? getSelection() : '').trim();
-            if (selected.length > 0) return JSON.stringify(selected.split(/\\n\\s*\\n|\\n/));
+            if (selected.length > 0) return JSON.stringify({lang, paragraphs: selected.split(/\\n\\s*\\n|\\n/)});
             const skip = 'nav, aside, footer, header nav, form, button, script, style, noscript, pre, code, figure, [aria-hidden=true], [hidden]';
             let root = document.querySelector('article, main, [role=main]');
             if (!root) {
@@ -180,10 +231,12 @@ final class PageReader {
                 if (text.length > 1) out.push(text);
             }
             if (out.length === 0 && root.innerText) out.push(...root.innerText.split(/\\n+/));
-            return JSON.stringify(out);
+            return JSON.stringify({lang, paragraphs: out});
             """, arguments: [:], in: nil, contentWorld: ScriptInjector.isolatedWorld) as? String
-        guard let raw, let list = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String] else { return [] }
-        return cleaned(list)
+        guard let raw, let object = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+              let list = object["paragraphs"] as? [String] else { return PageText(paragraphs: [], declaredLanguage: nil) }
+        let lang = object["lang"] as? String
+        return PageText(paragraphs: cleaned(list), declaredLanguage: lang?.isEmpty == false ? lang : nil)
     }
 
     /// Trims and drops empty entries, and stops once `maximumCharacters` are
@@ -243,7 +296,7 @@ final class PhononSession: @unchecked Sendable {
         timePitch.bypass = abs(rate - 1) < 0.01
     }
 
-    func start(_ paragraphs: [String], voice: String) {
+    func start(_ paragraphs: [String], model: PhononModel, language: String, voice: String) {
         do {
             try audio.start()
         } catch {
@@ -251,16 +304,16 @@ final class PhononSession: @unchecked Sendable {
             return
         }
         player.play()
-        speak(paragraphs, from: 0, voice: voice)
+        speak(paragraphs, from: 0, model: model, language: language, voice: voice)
     }
 
-    private func speak(_ paragraphs: [String], from index: Int, voice: String) {
+    private func speak(_ paragraphs: [String], from index: Int, model: PhononModel, language: String, voice: String) {
         guard index < paragraphs.count, !isCancelled else {
             // Everything is queued: finish once the last of it has played.
             enqueue([], last: true)
             return
         }
-        PhononEngine.shared.speak(paragraphs[index], voice: voice, onAudio: { [self] samples in
+        PhononEngine.shared.speak(paragraphs[index], model: model, language: language, voice: voice, onAudio: { [self] samples in
             enqueue(samples, last: false)
             return waitForRoom()
         }, completion: { [self] error in
@@ -270,7 +323,7 @@ final class PhononSession: @unchecked Sendable {
             }
             // A beat between paragraphs, as a person reading aloud would leave.
             enqueue([Float](repeating: 0, count: Int(PhononEngine.sampleRate * 0.35)), last: false)
-            speak(paragraphs, from: index + 1, voice: voice)
+            speak(paragraphs, from: index + 1, model: model, language: language, voice: voice)
         })
     }
 

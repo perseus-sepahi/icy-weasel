@@ -36,7 +36,7 @@ final class ReadAloudTests: XCTestCase {
             </article>
             <footer><p>© Example News</p></footer>
             """)
-        let text = await PageReader.readableText(from: webView)
+        let text = await PageReader.readableText(from: webView).paragraphs
         XCTAssertEqual(text, [
             "Glaciers are retreating",
             "The ice has thinned by a third since 1980.",
@@ -51,7 +51,7 @@ final class ReadAloudTests: XCTestCase {
             <div id="story"><p>One long paragraph of the story itself.</p><p>And another one after it.</p></div>
             <div id="links"><p>Related</p></div>
             """)
-        let text = await PageReader.readableText(from: webView)
+        let text = await PageReader.readableText(from: webView).paragraphs
         XCTAssertEqual(text, ["One long paragraph of the story itself.", "And another one after it."])
     }
 
@@ -59,7 +59,7 @@ final class ReadAloudTests: XCTestCase {
         let webView = try await page("<article><p id=a>Read this sentence.</p><p>But not this one.</p></article>")
         _ = try await webView.evaluateJavaScript(
             "getSelection().selectAllChildren(document.getElementById('a')); true")
-        let text = await PageReader.readableText(from: webView)
+        let text = await PageReader.readableText(from: webView).paragraphs
         XCTAssertEqual(text, ["Read this sentence."])
     }
 
@@ -72,20 +72,91 @@ final class ReadAloudTests: XCTestCase {
 
     // MARK: Phonon
 
-    func testVoiceListMatchesTheModel() throws {
-        guard let model = PhononEngine.bundledModel else { throw XCTSkip("Phonon's model is not in this build") }
-        let files = try FileManager.default.contentsOfDirectory(atPath: model.appendingPathComponent("voices").path)
-        let names = Set(files.map { ($0 as NSString).deletingPathExtension })
-        XCTAssertEqual(Set(PhononEngine.voices), names.subtracting(["default"]))
-        XCTAssertTrue(PhononEngine.voices.contains(PhononEngine.defaultVoice))
+    func testVoiceCatalogDescribesTheBuiltInModel() throws {
+        guard PhononModel.english31m.location != nil else { throw XCTSkip("Phonon's model is not in this build") }
+        let voices = PhononEngine.voices(of: .english31m)
+        XCTAssertEqual(voices.count, 37, "every voice file except the duplicate 'default'")
+        XCTAssertEqual(voices.first?.name, "Zoey", "the catalog's order, best first")
+        XCTAssertTrue(voices.allSatisfy { $0.language == "en" })
+        XCTAssertEqual(voices.first { $0.name == "Maeve" }?.label, "Maeve · British")
+        XCTAssertEqual(voices.first { $0.name == "Grub the Ogre" }?.label, "Grub the Ogre · character")
+        XCTAssertEqual(PhononEngine.voice(of: .english31m, language: "en", preferred: "Hugh"), "Hugh")
+        XCTAssertEqual(PhononEngine.voice(of: .english31m, language: "en", preferred: "Noémie"), "Zoey",
+                       "a voice the model lacks falls back to the language's first")
+        XCTAssertNil(PhononEngine.voice(of: .english31m, language: "fr", preferred: nil))
+    }
+
+    // MARK: Language and routing
+
+    func testRecognisesThePageLanguage() {
+        XCTAssertEqual(PageReader.language(of: ["Les glaciers reculent chaque été depuis des décennies, et la glace s'amincit."], declared: "en"), "fr",
+                       "the text wins over a template's lang=\"en\"")
+        XCTAssertEqual(PageReader.language(of: ["Die Gletscher ziehen sich jeden Sommer weiter zurück."], declared: nil), "de")
+        XCTAssertEqual(PageReader.language(of: ["OK"], declared: "pt-BR"), "pt", "too short to tell: the attribute decides")
+        XCTAssertEqual(PageReader.language(of: ["OK"], declared: nil), "en")
+    }
+
+    func testRoutesEachLanguageToAVoiceThatSpeaksIt() throws {
+        guard PhononModel.english31m.isAvailable else { throw XCTSkip("Phonon can't run on this Mac or build") }
+        let suite = "iw-readaloud-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
+        let settings = BrowserSettings(defaults: defaults)
+        let reader = PageReader(settings: settings)
+
+        settings.readAloudVoices = ["en": "Hugh"]
+        XCTAssertEqual(reader.plan(for: "en"), .init(voice: .phonon(.english31m, voice: "Hugh"), language: "en"))
+        XCTAssertEqual(reader.plan(for: "fr").voice, .apple, "31M speaks only English")
+
+        settings.readAloudEngine = .phonon40mMultilingual
+        if !PhononModel.multilingual40m.isAvailable {
+            XCTAssertEqual(reader.plan(for: "en").voice, .phonon(.english31m, voice: "Hugh"),
+                           "until the download is there, English keeps Phonon 31M")
+        } else {
+            XCTAssertEqual(reader.plan(for: "fr").language, "fr")
+            if case .phonon(let model, _) = reader.plan(for: "fr").voice { XCTAssertEqual(model, .multilingual40m) }
+            else { XCTFail("French should use the multilingual model") }
+        }
+        XCTAssertEqual(reader.plan(for: "it").voice, .apple, "no Phonon model speaks Italian")
+
+        settings.readAloudEngine = .apple
+        XCTAssertEqual(reader.plan(for: "en").voice, .apple)
+    }
+
+    // MARK: Multilingual download
+
+    func testUnpacksAndChecksADownloadedModel() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("iw-dl-\(UUID().uuidString)")
+        addTeardownBlock { try? fm.removeItem(at: root) }
+        let model = root.appendingPathComponent("src/phonon-40m-multilingual")
+        try fm.createDirectory(at: model.appendingPathComponent("voices"), withIntermediateDirectories: true)
+        try Data("abc".utf8).write(to: model.appendingPathComponent("voices/Zoey.safetensors"))
+        let manifest = #"{"built": 1, "files": [{"path": "voices/Zoey.safetensors", "size": 3, "sha256": ""}]}"#
+        try Data(manifest.utf8).write(to: model.appendingPathComponent("bundle.json"))
+        let zip = root.appendingPathComponent("model.zip")
+        let ditto = Process()
+        ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        ditto.arguments = ["-c", "-k", "--keepParent", model.path, zip.path]
+        try ditto.run(); ditto.waitUntilExit()
+
+        // Inside the app's sandbox, as the real download runs.
+        let out = root.appendingPathComponent("out")
+        try PhononModelDownload.unzip(zip, into: out)
+        let unpacked = out.appendingPathComponent("phonon-40m-multilingual")
+        XCTAssertNoThrow(try PhononModelDownload.checkComplete(unpacked))
+        XCTAssertEqual(try PhononModelDownload.sha256(of: zip).count, 64)
+
+        try fm.removeItem(at: unpacked.appendingPathComponent("voices/Zoey.safetensors"))
+        XCTAssertThrowsError(try PhononModelDownload.checkComplete(unpacked), "a missing file is caught")
     }
 
     func testPhononSpeaksIntelligibleAudio() throws {
-        guard PhononEngine.isSupported else { throw XCTSkip("Phonon can't run on this Mac or build") }
+        guard PhononModel.english31m.isAvailable else { throw XCTSkip("Phonon can't run on this Mac or build") }
         let done = expectation(description: "spoken")
         var samples: [Float] = []
         var failure: Error?
-        PhononEngine.shared.speak("Icy Weasel can read this page to you.", voice: "Hugh", onAudio: { chunk in
+        PhononEngine.shared.speak("Icy Weasel can read this page to you.", model: .english31m, language: "en", voice: "Hugh", onAudio: { chunk in
             samples += chunk
             return true
         }, completion: { error in
@@ -103,13 +174,13 @@ final class ReadAloudTests: XCTestCase {
     }
 
     func testReaderPlaysThroughToTheEnd() async throws {
-        guard PhononEngine.isSupported else { throw XCTSkip("Phonon can't run on this Mac or build") }
+        guard PhononModel.english31m.isAvailable else { throw XCTSkip("Phonon can't run on this Mac or build") }
         let defaults = UserDefaults(suiteName: "ReadAloudTests")!
         defaults.removePersistentDomain(forName: "ReadAloudTests")
         let settings = BrowserSettings(defaults: defaults)
         settings.readAloudRate = 2   // through the time-pitch unit, and quicker
         let reader = PageReader(settings: settings)
-        XCTAssertTrue(reader.usesPhonon)
+        XCTAssertEqual(reader.plan(for: "en").voice, .phonon(.english31m, voice: "Zoey"))
         reader.speak(["One.", "Two."])
         var sawReading = false
         let deadline = Date().addingTimeInterval(120)
@@ -127,10 +198,10 @@ final class ReadAloudTests: XCTestCase {
         let defaults = UserDefaults(suiteName: suite)!
         addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
         let settings = BrowserSettings(defaults: defaults)
-        settings.readAloudVoice = BrowserSettings.systemReadAloudVoice
+        settings.readAloudEngine = .apple
         let reader = PageReader(settings: settings)
-        XCTAssertFalse(reader.usesPhonon, "the same path Intel Macs and macOS 14 take")
-        reader.speak(["One."])
+        XCTAssertEqual(reader.plan(for: "en").voice, .apple, "the same path Intel Macs and macOS 14 take")
+        reader.speak(["One."], language: "en")
         XCTAssertEqual(reader.state, .reading)
         let deadline = Date().addingTimeInterval(30)
         while reader.isActive && Date() < deadline { try await Task.sleep(nanoseconds: 20_000_000) }
@@ -138,7 +209,7 @@ final class ReadAloudTests: XCTestCase {
     }
 
     func testStopSilencesAndFreesTheEngine() async throws {
-        guard PhononEngine.isSupported else { throw XCTSkip("Phonon can't run on this Mac or build") }
+        guard PhononModel.english31m.isAvailable else { throw XCTSkip("Phonon can't run on this Mac or build") }
         let settings = BrowserSettings(defaults: UserDefaults(suiteName: "ReadAloudTests")!)
         let reader = PageReader(settings: settings)
         // Far more than the 20 s generation may run ahead, so generation is
@@ -152,7 +223,7 @@ final class ReadAloudTests: XCTestCase {
 
         // The shared engine must be free again, not stuck behind the old reading.
         let done = expectation(description: "engine free")
-        PhononEngine.shared.speak("Again.", voice: "Zoey", onAudio: { _ in true }, completion: { _ in done.fulfill() })
+        PhononEngine.shared.speak("Again.", model: .english31m, language: "en", voice: "Zoey", onAudio: { _ in true }, completion: { _ in done.fulfill() })
         await fulfillment(of: [done], timeout: 10)
     }
 }
@@ -163,7 +234,7 @@ final class ReadAloudTests: XCTestCase {
 @MainActor
 final class ReadAloudWindowTests: XCTestCase {
     func testReadsAnArticleInABrowserWindow() async throws {
-        guard PhononEngine.isSupported else { throw XCTSkip("Phonon can't run on this Mac or build") }
+        guard PhononModel.english31m.isAvailable else { throw XCTSkip("Phonon can't run on this Mac or build") }
         let suite = "iw-readaloud-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
