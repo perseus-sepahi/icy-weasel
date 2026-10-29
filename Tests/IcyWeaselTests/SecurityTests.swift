@@ -206,3 +206,26 @@ final class PopupPolicyTests: XCTestCase {
         XCTAssertEqual(decide("javascript:alert(1)", allowed: true), .block)
     }
 }
+
+/// What App Review checks in the signed app (guideline 2.4.5): sandboxed, and
+/// no hardened-runtime exception keys, not even ones set to false.
+final class EntitlementTests: XCTestCase {
+    private func signedEntitlements() throws -> [String: Any] {
+        var code: SecCode?
+        XCTAssertEqual(SecCodeCopySelf([], &code), errSecSuccess)
+        var staticCode: SecStaticCode?
+        XCTAssertEqual(SecCodeCopyStaticCode(try XCTUnwrap(code), [], &staticCode), errSecSuccess)
+        var info: CFDictionary?
+        XCTAssertEqual(SecCodeCopySigningInformation(try XCTUnwrap(staticCode),
+                                                     SecCSFlags(rawValue: kSecCSSigningInformation), &info), errSecSuccess)
+        let dict = try XCTUnwrap(info as? [String: Any])
+        return try XCTUnwrap(dict[kSecCodeInfoEntitlementsDict as String] as? [String: Any], "the app is signed with entitlements")
+    }
+
+    func testTheSignedAppHasOnlyEntitlementsTheMacAppStoreAccepts() throws {
+        let entitlements = try signedEntitlements()
+        XCTAssertEqual(entitlements["com.apple.security.app-sandbox"] as? Bool, true)
+        let runtimeExceptions = entitlements.keys.filter { $0.hasPrefix("com.apple.security.cs.") }
+        XCTAssertEqual(runtimeExceptions, [], "App Review rejects these keys, even with the value false")
+    }
+}
