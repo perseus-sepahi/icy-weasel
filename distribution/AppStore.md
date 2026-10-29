@@ -44,6 +44,7 @@ EVERYTHING ELSE
 • Tab groups, tab sleeping and session restore
 • Private windows that keep nothing
 • A page assistant that finds the open-source AI models running on your Mac, so pages never leave it, with optional cloud models using your own API key
+• Reads pages aloud with a natural on-device voice, in the page's own language; nothing is sent anywhere
 • Eleven search engines to choose from, or your own
 • Per-site controls for every protection
 • History and bookmarks with suggestions that never leave your Mac
